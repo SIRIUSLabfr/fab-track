@@ -3,8 +3,8 @@ import {
   LineChart, Line, XAxis, YAxis, ResponsiveContainer, Tooltip, CartesianGrid,
 } from "recharts";
 import {
-  Flame, Dumbbell, UtensilsCrossed, TrendingUp, Check, Plus, X,
-  ArrowUp, Minus, Moon, Battery, Ruler, Scale, LogOut, Cloud, CloudOff,
+  Flame, Dumbbell, UtensilsCrossed, TrendingUp, Check, Plus, X, ArrowUp, Minus,
+  Moon, Battery, Ruler, Scale, LogOut, Cloud, CloudOff, Camera, Sparkles, Footprints, Loader2,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -21,6 +21,7 @@ const FONT_CSS = `
 @keyframes pop { 0%{transform:scale(.85);opacity:0} 100%{transform:scale(1);opacity:1} }
 @keyframes slideUp { 0%{transform:translateY(8px);opacity:0} 100%{transform:translateY(0);opacity:1} }
 @keyframes spin { to { transform: rotate(360deg); } }
+.spin { animation: spin .8s linear infinite; }
 `;
 
 /* ============================== DATA ============================== */
@@ -57,6 +58,8 @@ const EXERCISES = [
   { id: "bizeps", name: "Bizepscurl (normal/Obergriff)", muscles: "Bizeps · Unterarme", how: "Stange/SZ + Bänder, im Wechsel Untergriff und Obergriff. Widerstand so, dass 8–12 schwer sind." },
 ];
 
+const TAB_IDS = ["heute", "training", "essen", "verlauf"];
+
 /* ============================== HELPERS ============================== */
 const todayKey = () => {
   const d = new Date();
@@ -67,6 +70,38 @@ const prettyDate = (k) => {
   const wd = ["So", "Mo", "Di", "Mi", "Do", "Fr", "Sa"][new Date(+y, +m - 1, +d).getDay()];
   return `${wd}, ${d}.${m}.`;
 };
+const nowTime = () => {
+  const d = new Date();
+  return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+};
+
+// Foto verkleinern, damit der Upload klein bleibt
+const resizeImage = (file) => new Promise((resolve, reject) => {
+  const img = new Image();
+  img.onload = () => {
+    const max = 1280;
+    const scale = Math.min(1, max / Math.max(img.width, img.height));
+    const c = document.createElement("canvas");
+    c.width = Math.round(img.width * scale);
+    c.height = Math.round(img.height * scale);
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    resolve(c.toDataURL("image/jpeg", 0.8).split(",")[1]);
+    URL.revokeObjectURL(img.src);
+  };
+  img.onerror = reject;
+  img.src = URL.createObjectURL(file);
+});
+
+async function callAnalyze(payload) {
+  const res = await fetch("/.netlify/functions/analyze", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok || data.error) throw new Error(data.error || `Fehler ${res.status}`);
+  return data;
+}
 
 /* ============================== SMALL UI ============================== */
 function Pill({ active, children, onClick, color }) {
@@ -80,6 +115,16 @@ function Pill({ active, children, onClick, color }) {
 }
 function Card({ children, style }) {
   return <div style={{ background: C.surface, border: `1px solid ${C.line}`, borderRadius: 16, ...style }}>{children}</div>;
+}
+function StatCard({ icon, label, value, suffix, highlight }) {
+  return (
+    <Card style={{ flex: 1, padding: 16 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, color: C.muted, fontSize: 11, fontWeight: 600, marginBottom: 8 }}>{icon} {label}</div>
+      <div style={{ fontFamily: "'Bricolage Grotesque'", fontSize: 30, fontWeight: 800, lineHeight: 1, color: highlight ? C.accent : C.text }}>
+        {value}{suffix && <span style={{ fontSize: 16, color: C.muted, fontWeight: 500 }}>{suffix}</span>}
+      </div>
+    </Card>
+  );
 }
 
 /* ============================== AUTH ============================== */
@@ -110,60 +155,187 @@ function Auth() {
     <div style={{ background: C.bg, minHeight: "100vh", color: C.text, fontFamily: "'Sora', sans-serif", display: "flex", alignItems: "center", justifyContent: "center", padding: 20 }}>
       <style>{FONT_CSS}</style>
       <div style={{ width: "100%", maxWidth: 360, animation: "slideUp .4s ease" }}>
-        <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 34, lineHeight: 1, marginBottom: 6 }}>
-          System<span style={{ color: C.accent }}>.</span>
-        </div>
-        <div style={{ fontSize: 12.5, color: C.muted, marginBottom: 26, fontFamily: "'JetBrains Mono'" }}>
-          {mode === "login" ? "Anmelden" : "Account anlegen"}
-        </div>
-
+        <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 34, lineHeight: 1, marginBottom: 6 }}>System<span style={{ color: C.accent }}>.</span></div>
+        <div style={{ fontSize: 12.5, color: C.muted, marginBottom: 26, fontFamily: "'JetBrains Mono'" }}>{mode === "login" ? "Anmelden" : "Account anlegen"}</div>
         <input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="E-Mail" autoCapitalize="none" autoCorrect="off" type="email" style={inp} />
         <input value={pw} onChange={(e) => setPw(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()} placeholder="Passwort" type="password" style={{ ...inp, marginTop: 10 }} />
-
-        <button onClick={submit} disabled={busy} style={{
-          width: "100%", marginTop: 16, background: C.accent, border: "none", borderRadius: 12, padding: "13px",
-          color: "#111", fontWeight: 800, fontSize: 15, cursor: busy ? "default" : "pointer",
-          fontFamily: "'Bricolage Grotesque'", opacity: busy ? .6 : 1,
-        }}>{busy ? "…" : mode === "login" ? "Anmelden" : "Registrieren"}</button>
-
+        <button onClick={submit} disabled={busy} style={{ width: "100%", marginTop: 16, background: C.accent, border: "none", borderRadius: 12, padding: "13px", color: "#111", fontWeight: 800, fontSize: 15, cursor: busy ? "default" : "pointer", fontFamily: "'Bricolage Grotesque'", opacity: busy ? .6 : 1 }}>{busy ? "…" : mode === "login" ? "Anmelden" : "Registrieren"}</button>
         {msg && <div style={{ marginTop: 14, fontSize: 12, color: C.warn, lineHeight: 1.45 }}>{msg}</div>}
-
-        <button onClick={() => { setMode(mode === "login" ? "signup" : "login"); setMsg(""); }} style={{
-          width: "100%", marginTop: 18, background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 12.5, fontFamily: "'Sora'",
-        }}>
+        <button onClick={() => { setMode(mode === "login" ? "signup" : "login"); setMsg(""); }} style={{ width: "100%", marginTop: 18, background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 12.5, fontFamily: "'Sora'" }}>
           {mode === "login" ? "Noch kein Account? Registrieren" : "Schon registriert? Anmelden"}
         </button>
       </div>
     </div>
   );
 }
-const inp = {
-  width: "100%", background: C.surface, border: `1px solid ${C.line}`, borderRadius: 12, padding: "13px 14px",
-  color: C.text, fontSize: 15, fontFamily: "'Sora'", outline: "none",
-};
+const inp = { width: "100%", background: C.surface, border: `1px solid ${C.line}`, borderRadius: 12, padding: "13px 14px", color: C.text, fontSize: 15, fontFamily: "'Sora'", outline: "none" };
+
+/* ============================== QUICK LOG ============================== */
+function QuickLog({ day, setDay }) {
+  const [txt, setTxt] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const fileRef = useRef(null);
+  const logs = day.quickLogs || [];
+
+  const addLog = (entry) => setDay((prev) => ({ ...prev, quickLogs: [...(prev.quickLogs || []), entry] }));
+  const removeLog = (i) => setDay((prev) => ({ ...prev, quickLogs: (prev.quickLogs || []).filter((_, idx) => idx !== i) }));
+
+  const logText = async () => {
+    if (!txt.trim() || busy) return;
+    setBusy(true); setErr("");
+    try {
+      const r = await callAnalyze({ type: "meal-text", text: txt.trim() });
+      addLog({ time: nowTime(), name: r.name, kcal: Math.round(r.kcal), protein: Math.round(r.protein_g), source: "text" });
+      setTxt("");
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+
+  const logPhoto = async (file) => {
+    if (!file || busy) return;
+    setBusy(true); setErr("");
+    try {
+      const b64 = await resizeImage(file);
+      const r = await callAnalyze({ type: "meal-photo", image: b64, mediaType: "image/jpeg", text: txt.trim() });
+      addLog({ time: nowTime(), name: r.name, kcal: Math.round(r.kcal), protein: Math.round(r.protein_g), source: "foto" });
+      setTxt("");
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
+  return (
+    <Card style={{ padding: 14, marginBottom: 14, borderColor: C.accentDim, background: "rgba(197,248,42,.04)" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10 }}>
+        <Sparkles size={15} color={C.accent} />
+        <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 16 }}>Quick-Log</span>
+        <span style={{ fontSize: 10, color: C.muted, fontFamily: "'JetBrains Mono'", marginLeft: "auto" }}>KI schätzt kcal + Protein</span>
+      </div>
+      <div style={{ display: "flex", gap: 6 }}>
+        <input value={txt} onChange={(e) => setTxt(e.target.value)} onKeyDown={(e) => e.key === "Enter" && logText()}
+          placeholder='z.B. "Döner + Cola Zero"' disabled={busy}
+          style={{ flex: 1, background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 12px", color: C.text, fontSize: 13, fontFamily: "'Sora'", outline: "none" }} />
+        <button onClick={() => fileRef.current?.click()} disabled={busy} title="Foto"
+          style={{ background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 10, padding: "0 12px", cursor: "pointer", color: C.text }}>
+          <Camera size={17} />
+        </button>
+        <button onClick={logText} disabled={busy || !txt.trim()}
+          style={{ background: C.accent, border: "none", borderRadius: 10, padding: "0 14px", cursor: "pointer", color: "#111", fontWeight: 800, fontSize: 13, fontFamily: "'Bricolage Grotesque'", opacity: busy || !txt.trim() ? .5 : 1 }}>
+          {busy ? <Loader2 size={16} className="spin" /> : "Log"}
+        </button>
+        <input ref={fileRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={(e) => logPhoto(e.target.files?.[0])} />
+      </div>
+      {err && <div style={{ marginTop: 8, fontSize: 11.5, color: C.warn }}>{err}</div>}
+      {logs.length > 0 && (
+        <div style={{ marginTop: 11, display: "flex", flexDirection: "column", gap: 5 }}>
+          {logs.map((l, i) => (
+            <div key={i} style={{ display: "flex", alignItems: "center", gap: 9, background: C.surface2, borderRadius: 9, padding: "8px 10px", animation: "slideUp .2s" }}>
+              <span style={{ fontSize: 10, color: C.muted, fontFamily: "'JetBrains Mono'" }}>{l.time}</span>
+              <span style={{ fontSize: 12.5, flex: 1, lineHeight: 1.3 }}>{l.name}</span>
+              <span style={{ fontSize: 11.5, fontFamily: "'JetBrains Mono'", fontWeight: 700, whiteSpace: "nowrap" }}>{l.kcal}<span style={{ color: C.muted, fontWeight: 400 }}> kcal</span></span>
+              <span style={{ fontSize: 11.5, fontFamily: "'JetBrains Mono'", fontWeight: 700, color: C.accent, whiteSpace: "nowrap" }}>{l.protein}g<span style={{ color: C.muted, fontWeight: 400 }}> P</span></span>
+              <button onClick={() => removeLog(i)} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", padding: 2 }}><X size={14} /></button>
+            </div>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+/* ============================== TAGESANALYSE ============================== */
+function DayAnalysis({ day }) {
+  const [busy, setBusy] = useState(false);
+  const [result, setResult] = useState(day.analysisResult || null);
+  const [err, setErr] = useState("");
+
+  const run = async () => {
+    setBusy(true); setErr("");
+    try {
+      const mealsChecked = {};
+      MEALS.forEach((m) => { const sel = day.meals?.[m.id] || []; if (sel.length) mealsChecked[m.label] = sel; });
+      const exercisesDone = EXERCISES.filter((e) => day.exercises?.[e.id]?.done).map((e) => e.name);
+      const payload = {
+        type: "day-analysis",
+        day: { abgehakteMahlzeiten: mealsChecked, quickLogs: day.quickLogs || [], training: exercisesDone, schritte: day.steps || null },
+      };
+      const r = await callAnalyze(payload);
+      setResult(r);
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+
+  return (
+    <Card style={{ padding: 14, marginBottom: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <Sparkles size={15} color={C.accent} />
+        <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 15 }}>Tagesanalyse</span>
+        <button onClick={run} disabled={busy} style={{ marginLeft: "auto", background: C.accent, border: "none", borderRadius: 9, padding: "7px 13px", cursor: "pointer", color: "#111", fontWeight: 800, fontSize: 12, fontFamily: "'Bricolage Grotesque'", opacity: busy ? .5 : 1, display: "flex", alignItems: "center", gap: 5 }}>
+          {busy ? <Loader2 size={14} className="spin" /> : "Analysieren"}
+        </button>
+      </div>
+      {err && <div style={{ marginTop: 9, fontSize: 11.5, color: C.warn }}>{err}</div>}
+      {result && (
+        <div style={{ marginTop: 11, animation: "slideUp .25s" }}>
+          <div style={{ display: "flex", gap: 14, marginBottom: 9 }}>
+            <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 15, fontWeight: 700 }}>~{result.kcal_estimate}<span style={{ fontSize: 11, color: C.muted, fontWeight: 400 }}> kcal</span></span>
+            <span style={{ fontFamily: "'JetBrains Mono'", fontSize: 15, fontWeight: 700, color: C.accent }}>~{result.protein_estimate}g<span style={{ fontSize: 11, color: C.muted, fontWeight: 400 }}> Protein</span></span>
+          </div>
+          <div style={{ fontSize: 12.5, lineHeight: 1.55, color: C.text }}>{result.text}</div>
+        </div>
+      )}
+      {!result && !err && <div style={{ marginTop: 9, fontSize: 11.5, color: C.muted }}>Einmal am Tag drücken — KI bilanziert kcal, Protein und gibt einen Hinweis für morgen.</div>}
+    </Card>
+  );
+}
 
 /* ============================== HEUTE ============================== */
 function Heute({ day, setDay, measurements }) {
   const mealsDone = MEALS.filter((m) => (day.meals?.[m.id] || []).length > 0).length;
   const exDone = EXERCISES.filter((e) => day.exercises?.[e.id]?.done).length;
+  const kcalToday = (day.quickLogs || []).reduce((s, l) => s + (l.kcal || 0), 0);
   const last = measurements[measurements.length - 1];
+  const [stepsEdit, setStepsEdit] = useState(false);
+  const [stepsVal, setStepsVal] = useState("");
+
   const toggleQuickMeal = (mealId, item) => setDay((prev) => {
     const cur = prev.meals?.[mealId] || []; const has = cur.includes(item);
     return { ...prev, meals: { ...prev.meals, [mealId]: has ? cur.filter((x) => x !== item) : [...cur, item] } };
   });
+  const saveSteps = () => {
+    const n = parseInt(stepsVal.replace(/\D/g, ""), 10);
+    if (!isNaN(n)) setDay((prev) => ({ ...prev, steps: n }));
+    setStepsEdit(false); setStepsVal("");
+  };
 
   return (
     <div style={{ animation: "slideUp .3s ease" }}>
+      <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
+        <StatCard icon={<UtensilsCrossed size={13} />} label="ESSEN" value={mealsDone} suffix={`/${MEALS.length}`} highlight={mealsDone >= 3} />
+        <StatCard icon={<Dumbbell size={13} />} label="TRAINING" value={exDone} suffix={`/${EXERCISES.length}`} highlight={exDone > 0} />
+      </div>
       <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
-        <Card style={{ flex: 1, padding: 16 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, color: C.muted, fontSize: 11, fontWeight: 600, marginBottom: 8 }}><UtensilsCrossed size={13} /> ESSEN</div>
-          <div style={{ fontFamily: "'Bricolage Grotesque'", fontSize: 30, fontWeight: 800, lineHeight: 1, color: mealsDone >= 3 ? C.accent : C.text }}>{mealsDone}<span style={{ fontSize: 16, color: C.muted, fontWeight: 500 }}>/{MEALS.length}</span></div>
-        </Card>
-        <Card style={{ flex: 1, padding: 16 }}>
-          <div style={{ display: "flex", alignItems: "center", gap: 6, color: C.muted, fontSize: 11, fontWeight: 600, marginBottom: 8 }}><Dumbbell size={13} /> TRAINING</div>
-          <div style={{ fontFamily: "'Bricolage Grotesque'", fontSize: 30, fontWeight: 800, lineHeight: 1, color: exDone > 0 ? C.accent : C.text }}>{exDone}<span style={{ fontSize: 16, color: C.muted, fontWeight: 500 }}>/{EXERCISES.length}</span></div>
+        <StatCard icon={<Flame size={13} />} label="KCAL GELOGGT" value={kcalToday || "–"} highlight={false} />
+        <Card style={{ flex: 1, padding: 16, cursor: "pointer" }} >
+          <div onClick={() => !stepsEdit && setStepsEdit(true)}>
+            <div style={{ display: "flex", alignItems: "center", gap: 6, color: C.muted, fontSize: 11, fontWeight: 600, marginBottom: 8 }}><Footprints size={13} /> SCHRITTE</div>
+            {stepsEdit ? (
+              <div style={{ display: "flex", gap: 5 }}>
+                <input autoFocus value={stepsVal} onChange={(e) => setStepsVal(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveSteps()} inputMode="numeric" placeholder={day.steps ? String(day.steps) : "0"}
+                  style={{ width: "100%", background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 8, padding: "4px 8px", color: C.text, fontSize: 17, fontWeight: 700, fontFamily: "'JetBrains Mono'", outline: "none" }} />
+                <button onClick={saveSteps} style={{ background: C.accent, border: "none", borderRadius: 8, padding: "0 10px", cursor: "pointer", color: "#111", fontWeight: 800 }}><Check size={15} /></button>
+              </div>
+            ) : (
+              <div style={{ fontFamily: "'Bricolage Grotesque'", fontSize: 30, fontWeight: 800, lineHeight: 1, color: (day.steps || 0) >= 8000 ? C.accent : C.text }}>
+                {day.steps ? day.steps.toLocaleString("de-DE") : "–"}
+              </div>
+            )}
+          </div>
         </Card>
       </div>
+
+      <DayAnalysis day={day} />
 
       {last && (
         <Card style={{ padding: "13px 16px", marginBottom: 14, display: "flex", gap: 18 }}>
@@ -209,7 +381,7 @@ function Training({ day, setDay, config, setConfig }) {
   return (
     <div style={{ animation: "slideUp .3s ease" }}>
       <Card style={{ padding: "12px 14px", marginBottom: 13, borderColor: C.accentDim, background: "rgba(197,248,42,.05)" }}>
-        <div style={{ fontSize: 12, lineHeight: 1.5, color: C.text }}><b style={{ color: C.accent }}>Greasing the Groove:</b> Über den Tag verteilt — jedes Mal beim Aufstehen 1 Übung, locker, nie bis zum Versagen. Häkchen = heute gemacht.</div>
+        <div style={{ fontSize: 12, lineHeight: 1.5, color: C.text }}><b style={{ color: C.accent }}>2 Durchgänge, früher Abend.</b> Nicht in der letzten Stunde vor dem Bett. Häkchen = heute gemacht. Wenn mehr als 15 Wdh easy sind → Last hoch.</div>
       </Card>
       {EXERCISES.map((e) => {
         const st = day.exercises?.[e.id] || {};
@@ -243,7 +415,7 @@ function Training({ day, setDay, config, setConfig }) {
                 <Pill active={st.feel === "schwer"} onClick={() => setEx(e.id, { feel: "schwer" })}>schwer</Pill>
               </div>
             )}
-            {tooEasy && <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 9, color: C.warn, fontSize: 11.5, fontWeight: 600, animation: "slideUp .2s" }}><ArrowUp size={14} /> Steigern: stärkeres Band oder Ziel +2 Wdh</div>}
+            {tooEasy && <div style={{ display: "flex", alignItems: "center", gap: 6, marginTop: 9, color: C.warn, fontSize: 11.5, fontWeight: 600, animation: "slideUp .2s" }}><ArrowUp size={14} /> Steigern: mehr Widerstand oder Ziel +2 Wdh</div>}
           </Card>
         );
       })}
@@ -264,6 +436,7 @@ function Essen({ day, setDay, config, setConfig }) {
 
   return (
     <div style={{ animation: "slideUp .3s ease" }}>
+      <QuickLog day={day} setDay={setDay} />
       {MEALS.map((m) => {
         const sel = day.meals?.[m.id] || [];
         const custom = config.customFoods?.[m.id] || [];
@@ -365,21 +538,30 @@ function Verlauf({ measurements, addMeasurement }) {
 
 /* ============================== APP ============================== */
 export default function App() {
-  const [session, setSession] = useState(undefined); // undefined = checking
-  const [tab, setTab] = useState("heute");
+  const [session, setSession] = useState(undefined);
+  const [tab, setTab] = useState(() => {
+    const h = window.location.hash.replace("#", "");
+    return TAB_IDS.includes(h) ? h : "heute";
+  });
   const [dayKey] = useState(todayKey());
-  const [data, setData] = useState(null); // null = loading
-  const [syncState, setSyncState] = useState("idle"); // idle | saving | error
+  const [data, setData] = useState(null);
+  const [syncState, setSyncState] = useState("idle");
   const didLoad = useRef(false);
 
-  // ---- auth session ----
+  // hash routing (für App-Shortcuts: /#essen, /#training, /#verlauf)
+  useEffect(() => {
+    const apply = () => { const h = window.location.hash.replace("#", ""); if (TAB_IDS.includes(h)) setTab(h); };
+    window.addEventListener("hashchange", apply);
+    return () => window.removeEventListener("hashchange", apply);
+  }, []);
+  const go = (id) => { setTab(id); try { history.replaceState(null, "", "#" + id); } catch { /* ignore */ } };
+
   useEffect(() => {
     supabase.auth.getSession().then(({ data }) => setSession(data.session));
     const { data: sub } = supabase.auth.onAuthStateChange((_e, s) => setSession(s));
     return () => sub.subscription.unsubscribe();
   }, []);
 
-  // ---- load data when logged in ----
   useEffect(() => {
     if (!session) { setData(null); didLoad.current = false; return; }
     (async () => {
@@ -393,7 +575,6 @@ export default function App() {
     })();
   }, [session]);
 
-  // ---- persist on change ----
   useEffect(() => {
     if (!session || data === null || !didLoad.current) return;
     let cancelled = false;
@@ -417,7 +598,6 @@ export default function App() {
   const setConfig = useCallback((updater) => setData((prev) => ({ ...prev, config: typeof updater === "function" ? updater(prev.config) : updater })), []);
   const addMeasurement = useCallback((m) => setData((prev) => ({ ...prev, measurements: [...prev.measurements.filter((x) => x.date !== m.date), m].sort((a, b) => a.date.localeCompare(b.date)) })), []);
 
-  // ---- render states ----
   if (session === undefined) return <Splash />;
   if (!session) return <Auth />;
   if (data === null) return <Splash />;
@@ -457,7 +637,7 @@ export default function App() {
           {TABS.map((t) => {
             const on = tab === t.id; const Icon = t.icon;
             return (
-              <button key={t.id} onClick={() => setTab(t.id)} style={{ flex: 1, background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "6px 0", color: on ? C.accent : C.muted, transition: "color .15s" }}>
+              <button key={t.id} onClick={() => go(t.id)} style={{ flex: 1, background: "none", border: "none", cursor: "pointer", display: "flex", flexDirection: "column", alignItems: "center", gap: 4, padding: "6px 0", color: on ? C.accent : C.muted, transition: "color .15s" }}>
                 <Icon size={21} strokeWidth={on ? 2.5 : 2} />
                 <span style={{ fontSize: 10, fontWeight: on ? 700 : 500, fontFamily: "'Bricolage Grotesque'" }}>{t.label}</span>
               </button>
