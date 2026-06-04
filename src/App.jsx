@@ -5,6 +5,7 @@ import {
 import {
   Flame, Dumbbell, UtensilsCrossed, TrendingUp, Check, Plus, X, ArrowUp, Minus,
   Moon, Battery, Ruler, Scale, LogOut, Cloud, CloudOff, Camera, Sparkles, Footprints, Loader2,
+  StickyNote, Activity, Waves, Bike,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -56,6 +57,13 @@ const EXERCISES = [
   { id: "hipthrust", name: "Hip Thrust / Glute Bridge", muscles: "Po · hintere Kette", how: "Schultern auf Couch/Bank, Becken heben, oben anspannen. 15–20 Wdh." },
   { id: "trizeps", name: "Trizepsdrücken am Seil", muscles: "Trizeps", how: "Bänder (~35 kg), Ellbogen fixiert am Körper, nach unten strecken. 12–15 Wdh." },
   { id: "bizeps", name: "Bizepscurl (normal/Obergriff)", muscles: "Bizeps · Unterarme", how: "Stange/SZ + Bänder, im Wechsel Untergriff und Obergriff. Widerstand so, dass 8–12 schwer sind." },
+];
+
+const ACTIVITY_PRESETS = [
+  { label: "Spazieren", icon: Footprints },
+  { label: "Laufen", icon: Activity },
+  { label: "Schwimmen", icon: Waves },
+  { label: "Radfahren", icon: Bike },
 ];
 
 const TAB_IDS = ["heute", "training", "essen", "verlauf"];
@@ -255,10 +263,19 @@ function DayAnalysis({ day }) {
     try {
       const mealsChecked = {};
       MEALS.forEach((m) => { const sel = day.meals?.[m.id] || []; if (sel.length) mealsChecked[m.label] = sel; });
+      const mealNotes = {};
+      MEALS.forEach((m) => { const n = day.mealNotes?.[m.id]; if (n && n.trim()) mealNotes[m.label] = n.trim(); });
       const exercisesDone = EXERCISES.filter((e) => day.exercises?.[e.id]?.done).map((e) => e.name);
       const payload = {
         type: "day-analysis",
-        day: { abgehakteMahlzeiten: mealsChecked, quickLogs: day.quickLogs || [], training: exercisesDone, schritte: day.steps || null },
+        day: {
+          abgehakteMahlzeiten: mealsChecked,
+          mahlzeitNotizen: mealNotes,
+          quickLogs: day.quickLogs || [],
+          training: exercisesDone,
+          aktivitaeten: day.activities || [],
+          schritte: day.steps || null,
+        },
       };
       const r = await callAnalyze(payload);
       setResult(r);
@@ -303,6 +320,7 @@ function Heute({ day, setDay, measurements }) {
     const cur = prev.meals?.[mealId] || []; const has = cur.includes(item);
     return { ...prev, meals: { ...prev.meals, [mealId]: has ? cur.filter((x) => x !== item) : [...cur, item] } };
   });
+  const setMealNote = (mealId, text) => setDay((prev) => ({ ...prev, mealNotes: { ...prev.mealNotes, [mealId]: text } }));
   const saveSteps = () => {
     const n = parseInt(stepsVal.replace(/\D/g, ""), 10);
     if (!isNaN(n)) setDay((prev) => ({ ...prev, steps: n }));
@@ -367,6 +385,15 @@ function Heute({ day, setDay, measurements }) {
                 </button>
               );
             })}
+            <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 6 }}>
+              <StickyNote size={13} color={C.muted} style={{ flexShrink: 0 }} />
+              <input
+                value={day.mealNotes?.[m.id] || ""}
+                onChange={(e) => setMealNote(m.id, e.target.value)}
+                placeholder="Notiz – z.B. Erdnussbutter im Shake"
+                style={{ flex: 1, background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 9, padding: "7px 10px", color: C.text, fontSize: 12, fontFamily: "'Sora'", outline: "none" }}
+              />
+            </div>
           </Card>
         );
       })}
@@ -378,6 +405,15 @@ function Heute({ day, setDay, measurements }) {
 function Training({ day, setDay, config, setConfig }) {
   const setEx = (id, patch) => setDay((prev) => ({ ...prev, exercises: { ...prev.exercises, [id]: { ...(prev.exercises?.[id] || {}), ...patch } } }));
   const setProg = (id, patch) => setConfig((prev) => ({ ...prev, progression: { ...prev.progression, [id]: { ...(prev.progression?.[id] || { band: "mittel", target: 12 }), ...patch } } }));
+  const [actName, setActName] = useState("");
+  const [actMin, setActMin] = useState("");
+  const activities = day.activities || [];
+  const addActivity = (name, minutes) => {
+    if (!name.trim()) return;
+    setDay((prev) => ({ ...prev, activities: [...(prev.activities || []), { time: nowTime(), name: name.trim(), minutes: minutes ? parseInt(minutes, 10) : null }] }));
+    setActName(""); setActMin("");
+  };
+  const removeActivity = (i) => setDay((prev) => ({ ...prev, activities: (prev.activities || []).filter((_, idx) => idx !== i) }));
   return (
     <div style={{ animation: "slideUp .3s ease" }}>
       <Card style={{ padding: "12px 14px", marginBottom: 13, borderColor: C.accentDim, background: "rgba(197,248,42,.05)" }}>
@@ -419,6 +455,49 @@ function Training({ day, setDay, config, setConfig }) {
           </Card>
         );
       })}
+
+      <Card style={{ padding: 14, marginTop: 4, marginBottom: 4 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 11 }}>
+          <Activity size={15} color={C.accent} />
+          <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 16 }}>Aktivität / Cardio</span>
+          <span style={{ fontSize: 10, color: C.muted, fontFamily: "'JetBrains Mono'", marginLeft: "auto" }}>Schwimmen, Spazieren …</span>
+        </div>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+          {ACTIVITY_PRESETS.map((a) => {
+            const Icon = a.icon;
+            return (
+              <button key={a.label} onClick={() => setActName(a.label)}
+                style={{ display: "flex", alignItems: "center", gap: 5, background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 999, padding: "6px 11px", cursor: "pointer", color: C.text, fontSize: 12, fontFamily: "'Sora'" }}>
+                <Icon size={13} /> {a.label}
+              </button>
+            );
+          })}
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <input value={actName} onChange={(e) => setActName(e.target.value)} onKeyDown={(e) => e.key === "Enter" && addActivity(actName, actMin)}
+            placeholder="Aktivität – z.B. Schwimmen"
+            style={{ flex: 1, background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 10, padding: "9px 11px", color: C.text, fontSize: 13, fontFamily: "'Sora'", outline: "none" }} />
+          <input value={actMin} onChange={(e) => setActMin(e.target.value.replace(/\D/g, ""))} onKeyDown={(e) => e.key === "Enter" && addActivity(actName, actMin)}
+            inputMode="numeric" placeholder="Min"
+            style={{ width: 64, background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 10, padding: "9px 8px", color: C.text, fontSize: 13, fontFamily: "'JetBrains Mono'", outline: "none", textAlign: "center" }} />
+          <button onClick={() => addActivity(actName, actMin)} disabled={!actName.trim()}
+            style={{ background: C.accent, border: "none", borderRadius: 10, padding: "0 13px", cursor: "pointer", color: "#111", fontWeight: 800, display: "flex", alignItems: "center", opacity: actName.trim() ? 1 : .5 }}>
+            <Plus size={18} />
+          </button>
+        </div>
+        {activities.length > 0 && (
+          <div style={{ marginTop: 11, display: "flex", flexDirection: "column", gap: 5 }}>
+            {activities.map((a, i) => (
+              <div key={i} style={{ display: "flex", alignItems: "center", gap: 9, background: C.surface2, borderRadius: 9, padding: "8px 10px", animation: "slideUp .2s" }}>
+                <span style={{ fontSize: 10, color: C.muted, fontFamily: "'JetBrains Mono'" }}>{a.time}</span>
+                <span style={{ fontSize: 12.5, flex: 1 }}>{a.name}</span>
+                {a.minutes ? <span style={{ fontSize: 11.5, fontFamily: "'JetBrains Mono'", fontWeight: 700, color: C.accent }}>{a.minutes}<span style={{ color: C.muted, fontWeight: 400 }}> min</span></span> : null}
+                <button onClick={() => removeActivity(i)} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", padding: 2 }}><X size={14} /></button>
+              </div>
+            ))}
+          </div>
+        )}
+      </Card>
     </div>
   );
 }
