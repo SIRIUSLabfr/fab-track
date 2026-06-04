@@ -5,7 +5,7 @@ import {
 import {
   Flame, Dumbbell, UtensilsCrossed, TrendingUp, Check, Plus, X, ArrowUp, Minus,
   Moon, Battery, Ruler, Scale, LogOut, Cloud, CloudOff, Camera, Sparkles, Footprints, Loader2,
-  StickyNote, Activity, Waves, Bike,
+  StickyNote, Activity, Waves, Bike, Clock,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -68,6 +68,13 @@ const ACTIVITY_PRESETS = [
 
 const TAB_IDS = ["heute", "training", "essen", "verlauf"];
 
+// Mahlzeiten-Slots zum Zuordnen der Quick-Logs (zusätzlich "Snack")
+const MEAL_SLOTS = [
+  ...MEALS.map((m) => ({ id: m.id, label: m.label })),
+  { id: "snack", label: "Snack" },
+];
+const MEAL_SLOT_SHORT = { fruehstueck: "Früh", mittag: "Mittag", nachmittag: "Nachm.", abend: "Abend", snack: "Snack" };
+
 /* ============================== HELPERS ============================== */
 const todayKey = () => {
   const d = new Date();
@@ -81,6 +88,14 @@ const prettyDate = (k) => {
 const nowTime = () => {
   const d = new Date();
   return `${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}`;
+};
+// Standard-Mahlzeit aus der Uhrzeit ableiten (für neue Quick-Logs)
+const inferMeal = () => {
+  const h = new Date().getHours();
+  if (h < 11) return "fruehstueck";
+  if (h < 14) return "mittag";
+  if (h < 17) return "nachmittag";
+  return "abend";
 };
 
 // Foto verkleinern, damit der Upload klein bleibt
@@ -178,6 +193,44 @@ function Auth() {
 }
 const inp = { width: "100%", background: C.surface, border: `1px solid ${C.line}`, borderRadius: 12, padding: "13px 14px", color: C.text, fontSize: 15, fontFamily: "'Sora'", outline: "none" };
 
+/* ============================== QUICK-LOG HELPERS + ROW ============================== */
+// gemeinsame Mutatoren – funktionieren sowohl im Essen- als auch im Heute-Tab
+const patchLog = (setDay, i, patch) => setDay((prev) => ({ ...prev, quickLogs: (prev.quickLogs || []).map((l, idx) => (idx === i ? { ...l, ...patch } : l)) }));
+const removeLogAt = (setDay, i) => setDay((prev) => ({ ...prev, quickLogs: (prev.quickLogs || []).filter((_, idx) => idx !== i) }));
+
+// Editierbare Log-Zeile: Uhrzeit ändern, Mahlzeit zuordnen, löschen
+function LogRow({ log, onPatch, onDelete, showMeal = true }) {
+  const [editTime, setEditTime] = useState(false);
+  const [tVal, setTVal] = useState(log.time || "");
+  const saveTime = () => { onPatch({ time: tVal.trim() || log.time }); setEditTime(false); };
+  return (
+    <div style={{ background: C.surface2, borderRadius: 9, padding: "8px 10px", animation: "slideUp .2s" }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+        {editTime ? (
+          <input autoFocus type="time" value={tVal} onChange={(e) => setTVal(e.target.value)} onBlur={saveTime} onKeyDown={(e) => e.key === "Enter" && saveTime()}
+            style={{ width: 84, background: C.surface, border: `1px solid ${C.line}`, borderRadius: 7, padding: "3px 6px", color: C.text, fontSize: 11, fontFamily: "'JetBrains Mono'", outline: "none" }} />
+        ) : (
+          <button onClick={() => { setTVal(log.time || ""); setEditTime(true); }} title="Uhrzeit ändern"
+            style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 10, fontFamily: "'JetBrains Mono'", padding: 0, display: "flex", alignItems: "center", gap: 3, flexShrink: 0 }}>
+            <Clock size={11} /> {log.time || "--:--"}
+          </button>
+        )}
+        <span style={{ fontSize: 12.5, flex: 1, lineHeight: 1.3 }}>{log.name}</span>
+        <span style={{ fontSize: 11.5, fontFamily: "'JetBrains Mono'", fontWeight: 700, whiteSpace: "nowrap" }}>{log.kcal}<span style={{ color: C.muted, fontWeight: 400 }}> kcal</span></span>
+        <span style={{ fontSize: 11.5, fontFamily: "'JetBrains Mono'", fontWeight: 700, color: C.accent, whiteSpace: "nowrap" }}>{log.protein}g<span style={{ color: C.muted, fontWeight: 400 }}> P</span></span>
+        <button onClick={onDelete} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", padding: 2 }}><X size={14} /></button>
+      </div>
+      {showMeal && (
+        <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginTop: 7 }}>
+          {MEAL_SLOTS.map((s) => (
+            <Pill key={s.id} active={(log.meal || "snack") === s.id} onClick={() => onPatch({ meal: s.id })}>{MEAL_SLOT_SHORT[s.id]}</Pill>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 /* ============================== QUICK LOG ============================== */
 function QuickLog({ day, setDay }) {
   const [txt, setTxt] = useState("");
@@ -194,7 +247,7 @@ function QuickLog({ day, setDay }) {
     setBusy(true); setErr("");
     try {
       const r = await callAnalyze({ type: "meal-text", text: txt.trim() });
-      addLog({ time: nowTime(), name: r.name, kcal: Math.round(r.kcal), protein: Math.round(r.protein_g), source: "text" });
+      addLog({ time: nowTime(), meal: inferMeal(), name: r.name, kcal: Math.round(r.kcal), protein: Math.round(r.protein_g), source: "text" });
       setTxt("");
     } catch (e) { setErr(e.message); }
     setBusy(false);
@@ -206,7 +259,7 @@ function QuickLog({ day, setDay }) {
     try {
       const b64 = await resizeImage(file);
       const r = await callAnalyze({ type: "meal-photo", image: b64, mediaType: "image/jpeg", text: txt.trim() });
-      addLog({ time: nowTime(), name: r.name, kcal: Math.round(r.kcal), protein: Math.round(r.protein_g), source: "foto" });
+      addLog({ time: nowTime(), meal: inferMeal(), name: r.name, kcal: Math.round(r.kcal), protein: Math.round(r.protein_g), source: "foto" });
       setTxt("");
     } catch (e) { setErr(e.message); }
     setBusy(false);
@@ -238,14 +291,9 @@ function QuickLog({ day, setDay }) {
       {logs.length > 0 && (
         <div style={{ marginTop: 11, display: "flex", flexDirection: "column", gap: 5 }}>
           {logs.map((l, i) => (
-            <div key={i} style={{ display: "flex", alignItems: "center", gap: 9, background: C.surface2, borderRadius: 9, padding: "8px 10px", animation: "slideUp .2s" }}>
-              <span style={{ fontSize: 10, color: C.muted, fontFamily: "'JetBrains Mono'" }}>{l.time}</span>
-              <span style={{ fontSize: 12.5, flex: 1, lineHeight: 1.3 }}>{l.name}</span>
-              <span style={{ fontSize: 11.5, fontFamily: "'JetBrains Mono'", fontWeight: 700, whiteSpace: "nowrap" }}>{l.kcal}<span style={{ color: C.muted, fontWeight: 400 }}> kcal</span></span>
-              <span style={{ fontSize: 11.5, fontFamily: "'JetBrains Mono'", fontWeight: 700, color: C.accent, whiteSpace: "nowrap" }}>{l.protein}g<span style={{ color: C.muted, fontWeight: 400 }}> P</span></span>
-              <button onClick={() => removeLog(i)} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", padding: 2 }}><X size={14} /></button>
-            </div>
+            <LogRow key={i} log={l} onPatch={(p) => patchLog(setDay, i, p)} onDelete={() => removeLog(i)} />
           ))}
+          <div style={{ fontSize: 10.5, color: C.muted, marginTop: 3, lineHeight: 1.4 }}>Tipp: Mahlzeit unten antippen zum Zuordnen · Uhrzeit über die Zeit-Anzeige ändern.</div>
         </div>
       )}
     </Card>
@@ -308,11 +356,12 @@ function DayAnalysis({ day }) {
 }
 
 /* ============================== HEUTE ============================== */
-function Heute({ day, setDay, measurements }) {
+function Heute({ day, setDay }) {
   const mealsDone = MEALS.filter((m) => (day.meals?.[m.id] || []).length > 0).length;
   const exDone = EXERCISES.filter((e) => day.exercises?.[e.id]?.done).length;
   const kcalToday = (day.quickLogs || []).reduce((s, l) => s + (l.kcal || 0), 0);
-  const last = measurements[measurements.length - 1];
+  // Quick-Logs mit ihrem Original-Index, nach Mahlzeit gefiltert (ohne meal => Snack)
+  const logsBy = (mealId) => (day.quickLogs || []).map((l, i) => ({ l, i })).filter(({ l }) => (l.meal || "snack") === mealId);
   const [stepsEdit, setStepsEdit] = useState(false);
   const [stepsVal, setStepsVal] = useState("");
 
@@ -355,14 +404,6 @@ function Heute({ day, setDay, measurements }) {
 
       <DayAnalysis day={day} />
 
-      {last && (
-        <Card style={{ padding: "13px 16px", marginBottom: 14, display: "flex", gap: 18 }}>
-          <div><div style={{ fontSize: 10, color: C.muted, fontWeight: 600 }}>GEWICHT</div><div style={{ fontFamily: "'JetBrains Mono'", fontSize: 17, fontWeight: 700 }}>{last.weight || "–"}<span style={{ fontSize: 11, color: C.muted }}> kg</span></div></div>
-          <div><div style={{ fontSize: 10, color: C.muted, fontWeight: 600 }}>BAUCH</div><div style={{ fontFamily: "'JetBrains Mono'", fontSize: 17, fontWeight: 700 }}>{last.waist || "–"}<span style={{ fontSize: 11, color: C.muted }}> cm</span></div></div>
-          <div style={{ marginLeft: "auto", alignSelf: "center", fontSize: 10, color: C.muted }}>{prettyDate(last.date)}</div>
-        </Card>
-      )}
-
       <div style={{ fontSize: 12, fontWeight: 700, color: C.muted, margin: "4px 2px 10px", letterSpacing: ".04em" }}>SCHNELL ABHAKEN — FAVORITEN</div>
       {MEALS.map((m) => {
         const sel = day.meals?.[m.id] || [];
@@ -385,7 +426,14 @@ function Heute({ day, setDay, measurements }) {
                 </button>
               );
             })}
-            <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 6 }}>
+            {logsBy(m.id).length > 0 && (
+              <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 7 }}>
+                {logsBy(m.id).map(({ l, i }) => (
+                  <LogRow key={i} log={l} onPatch={(p) => patchLog(setDay, i, p)} onDelete={() => removeLogAt(setDay, i)} />
+                ))}
+              </div>
+            )}
+            <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 7 }}>
               <StickyNote size={13} color={C.muted} style={{ flexShrink: 0 }} />
               <input
                 value={day.mealNotes?.[m.id] || ""}
@@ -397,6 +445,20 @@ function Heute({ day, setDay, measurements }) {
           </Card>
         );
       })}
+
+      {logsBy("snack").length > 0 && (
+        <Card style={{ padding: 12, marginBottom: 9 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
+            <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 14 }}>Snacks & Sonstiges</span>
+            <span style={{ fontSize: 10, color: C.muted, fontFamily: "'JetBrains Mono'" }}>nicht zugeordnet</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+            {logsBy("snack").map(({ l, i }) => (
+              <LogRow key={i} log={l} onPatch={(p) => patchLog(setDay, i, p)} onDelete={() => removeLogAt(setDay, i)} />
+            ))}
+          </div>
+        </Card>
+      )}
     </div>
   );
 }
@@ -705,7 +767,7 @@ export default function App() {
           </div>
         </div>
         <div style={{ padding: "0 14px" }}>
-          {tab === "heute" && <Heute day={day} setDay={setDay} measurements={data.measurements} />}
+          {tab === "heute" && <Heute day={day} setDay={setDay} />}
           {tab === "training" && <Training day={day} setDay={setDay} config={data.config} setConfig={setConfig} />}
           {tab === "essen" && <Essen day={day} setDay={setDay} config={data.config} setConfig={setConfig} />}
           {tab === "verlauf" && <Verlauf measurements={data.measurements} addMeasurement={addMeasurement} />}
