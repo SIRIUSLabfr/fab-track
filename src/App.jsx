@@ -6,6 +6,7 @@ import {
   Flame, Dumbbell, UtensilsCrossed, TrendingUp, Check, Plus, X, ArrowUp, Minus,
   Moon, Battery, Ruler, Scale, LogOut, Cloud, CloudOff, Camera, Sparkles, Footprints, Loader2,
   StickyNote, Activity, Waves, Bike, Clock,
+  ListTodo, Mic, MicOff, CalendarClock, Trash2,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -66,7 +67,14 @@ const ACTIVITY_PRESETS = [
   { label: "Radfahren", icon: Bike },
 ];
 
-const TAB_IDS = ["heute", "training", "essen", "verlauf"];
+const TAB_IDS = ["heute", "todos", "training", "essen", "verlauf"];
+
+// Todo-Kategorien (Reihenfolge = Anzeige) + Farben
+const TODO_CATEGORIES = ["Mädchen", "Memyself&I", "Co Parenting", "Shopping", "Ideen"];
+const TODO_CAT_COLOR = {
+  "Mädchen": "#F58EC1", "Memyself&I": "#C5F82A", "Co Parenting": "#5BC8F5",
+  "Shopping": "#F5A623", "Ideen": "#B98CF5",
+};
 
 // Mahlzeiten-Slots zum Zuordnen der Quick-Logs (zusätzlich "Snack")
 const MEAL_SLOTS = [
@@ -197,6 +205,21 @@ const inp = { width: "100%", background: C.surface, border: `1px solid ${C.line}
 // gemeinsame Mutatoren – funktionieren sowohl im Essen- als auch im Heute-Tab
 const patchLog = (setDay, i, patch) => setDay((prev) => ({ ...prev, quickLogs: (prev.quickLogs || []).map((l, idx) => (idx === i ? { ...l, ...patch } : l)) }));
 const removeLogAt = (setDay, i) => setDay((prev) => ({ ...prev, quickLogs: (prev.quickLogs || []).filter((_, idx) => idx !== i) }));
+
+// Todos liegen in config.todos (kein DB-Migrationsbedarf)
+const uid = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+const addTodoCfg = (setConfig, todo) => setConfig((prev) => ({ ...prev, todos: [...(prev.todos || []), todo] }));
+const patchTodoCfg = (setConfig, id, patch) => setConfig((prev) => ({ ...prev, todos: (prev.todos || []).map((t) => (t.id === id ? { ...t, ...patch } : t)) }));
+const removeTodoCfg = (setConfig, id) => setConfig((prev) => ({ ...prev, todos: (prev.todos || []).filter((t) => t.id !== id) }));
+const isValidDate = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+// Sortierung: offen vor erledigt, datierte vor undatierten, Datum aufsteigend, sonst Anlage-Reihenfolge
+const todoSort = (a, b) => {
+  if (!!a.done !== !!b.done) return a.done ? 1 : -1;
+  const ad = a.date ? 0 : 1, bd = b.date ? 0 : 1;
+  if (ad !== bd) return ad - bd;
+  if (a.date && b.date && a.date !== b.date) return a.date < b.date ? -1 : 1;
+  return (a.createdAt || "") < (b.createdAt || "") ? -1 : 1;
+};
 
 // Editierbare Log-Zeile: Uhrzeit ändern, Mahlzeit zuordnen, löschen
 function LogRow({ log, onPatch, onDelete, showMeal = true }) {
@@ -356,7 +379,9 @@ function DayAnalysis({ day }) {
 }
 
 /* ============================== HEUTE ============================== */
-function Heute({ day, setDay }) {
+function Heute({ day, setDay, config, setConfig }) {
+  const tk = todayKey();
+  const dueTodos = (config.todos || []).filter((t) => !t.done && t.date && t.date <= tk).sort(todoSort);
   const mealsDone = MEALS.filter((m) => (day.meals?.[m.id] || []).length > 0).length;
   const exDone = EXERCISES.filter((e) => day.exercises?.[e.id]?.done).length;
   const kcalToday = (day.quickLogs || []).reduce((s, l) => s + (l.kcal || 0), 0);
@@ -378,6 +403,20 @@ function Heute({ day, setDay }) {
 
   return (
     <div style={{ animation: "slideUp .3s ease" }}>
+      {dueTodos.length > 0 && (
+        <Card style={{ padding: 12, marginBottom: 14, borderColor: C.accentDim }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 9 }}>
+            <CalendarClock size={14} color={C.accent} />
+            <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 14 }}>Anstehend</span>
+            <span style={{ fontSize: 10, color: C.muted, fontFamily: "'JetBrains Mono'", marginLeft: "auto" }}>{dueTodos.length} fällig</span>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {dueTodos.map((t) => (
+              <TodoItem key={t.id} todo={t} onToggle={() => patchTodoCfg(setConfig, t.id, { done: !t.done })} onDelete={() => removeTodoCfg(setConfig, t.id)} />
+            ))}
+          </div>
+        </Card>
+      )}
       <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
         <StatCard icon={<UtensilsCrossed size={13} />} label="ESSEN" value={mealsDone} suffix={`/${MEALS.length}`} highlight={mealsDone >= 3} />
         <StatCard icon={<Dumbbell size={13} />} label="TRAINING" value={exDone} suffix={`/${EXERCISES.length}`} highlight={exDone > 0} />
@@ -677,6 +716,112 @@ function Verlauf({ measurements, addMeasurement }) {
   );
 }
 
+/* ============================== TODOS ============================== */
+function TodoItem({ todo, onToggle, onDelete, showCategory = true }) {
+  const col = TODO_CAT_COLOR[todo.category] || C.muted;
+  return (
+    <div style={{ display: "flex", alignItems: "flex-start", gap: 10, background: C.surface2, borderRadius: 10, padding: "10px 11px", animation: "slideUp .2s" }}>
+      <button onClick={onToggle} style={{ width: 20, height: 20, borderRadius: 6, flexShrink: 0, marginTop: 1, cursor: "pointer", background: todo.done ? C.accent : "transparent", border: `2px solid ${todo.done ? C.accent : C.muted}`, display: "flex", alignItems: "center", justifyContent: "center", animation: todo.done ? "pop .2s" : "none" }}>
+        {todo.done && <Check size={13} color="#111" strokeWidth={3} />}
+      </button>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: 13, lineHeight: 1.35, color: todo.done ? C.muted : C.text, textDecoration: todo.done ? "line-through" : "none" }}>{todo.title}</div>
+        <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 5, flexWrap: "wrap" }}>
+          {showCategory && (
+            <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: ".02em", color: col, border: `1px solid ${col}`, borderRadius: 999, padding: "1px 7px", fontFamily: "'JetBrains Mono'" }}>{todo.category}</span>
+          )}
+          {todo.date && (
+            <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 10.5, color: C.muted, fontFamily: "'JetBrains Mono'" }}><CalendarClock size={11} /> {prettyDate(todo.date)}</span>
+          )}
+        </div>
+      </div>
+      <button onClick={onDelete} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", padding: 2 }}><Trash2 size={15} /></button>
+    </div>
+  );
+}
+
+function Todos({ config, setConfig }) {
+  const [txt, setTxt] = useState("");
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [filter, setFilter] = useState("Alle");
+  const [listening, setListening] = useState(false);
+  const recRef = useRef(null);
+  const todos = config.todos || [];
+
+  const submit = async () => {
+    if (!txt.trim() || busy) return;
+    setBusy(true); setErr("");
+    try {
+      const r = await callAnalyze({ type: "todo", text: txt.trim(), day: { today: todayKey() } });
+      const category = TODO_CATEGORIES.includes(r.category) ? r.category : "Ideen";
+      addTodoCfg(setConfig, { id: uid(), title: (r.title || txt.trim()).trim(), category, date: isValidDate(r.date) ? r.date : null, done: false, createdAt: new Date().toISOString() });
+      setTxt("");
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+  };
+
+  const toggleVoice = () => {
+    if (listening) { recRef.current?.stop(); setListening(false); return; }
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    if (!SR) { setErr("Spracheingabe wird von diesem Browser nicht unterstützt — bitte tippen."); return; }
+    const rec = new SR();
+    rec.lang = "de-DE"; rec.interimResults = false; rec.maxAlternatives = 1;
+    rec.onresult = (e) => { const t = e.results[0][0].transcript; setTxt((p) => (p ? p + " " : "") + t); };
+    rec.onerror = () => setListening(false);
+    rec.onend = () => setListening(false);
+    recRef.current = rec; setErr(""); setListening(true);
+    try { rec.start(); } catch { setListening(false); }
+  };
+
+  const shown = todos.filter((t) => filter === "Alle" || t.category === filter).slice().sort(todoSort);
+  const openCount = todos.filter((t) => !t.done).length;
+
+  return (
+    <div style={{ animation: "slideUp .3s ease" }}>
+      <Card style={{ padding: 14, marginBottom: 14, borderColor: C.accentDim, background: "rgba(197,248,42,.04)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10 }}>
+          <Sparkles size={15} color={C.accent} />
+          <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 16 }}>Todo erfassen</span>
+          <span style={{ fontSize: 10, color: C.muted, fontFamily: "'JetBrains Mono'", marginLeft: "auto" }}>Sprache oder Text → KI sortiert</span>
+        </div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <input value={txt} onChange={(e) => setTxt(e.target.value)} onKeyDown={(e) => e.key === "Enter" && submit()}
+            placeholder='z.B. "Freitag Turnbeutel für die Kita packen"' disabled={busy}
+            style={{ flex: 1, background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 10, padding: "10px 12px", color: C.text, fontSize: 13, fontFamily: "'Sora'", outline: "none" }} />
+          <button onClick={toggleVoice} disabled={busy} title="Spracheingabe"
+            style={{ background: listening ? C.warn : C.surface2, border: `1px solid ${listening ? C.warn : C.line}`, borderRadius: 10, padding: "0 12px", cursor: "pointer", color: listening ? "#111" : C.text }}>
+            {listening ? <MicOff size={17} /> : <Mic size={17} />}
+          </button>
+          <button onClick={submit} disabled={busy || !txt.trim()}
+            style={{ background: C.accent, border: "none", borderRadius: 10, padding: "0 14px", cursor: "pointer", color: "#111", fontWeight: 800, fontSize: 13, fontFamily: "'Bricolage Grotesque'", opacity: busy || !txt.trim() ? .5 : 1 }}>
+            {busy ? <Loader2 size={16} className="spin" /> : "Add"}
+          </button>
+        </div>
+        {listening && <div style={{ marginTop: 8, fontSize: 11.5, color: C.warn }}>Sprich jetzt … (nochmal aufs Mikro tippen zum Stoppen)</div>}
+        {err && <div style={{ marginTop: 8, fontSize: 11.5, color: C.warn }}>{err}</div>}
+      </Card>
+
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
+        <Pill active={filter === "Alle"} onClick={() => setFilter("Alle")}>Alle</Pill>
+        {TODO_CATEGORIES.map((c) => <Pill key={c} active={filter === c} onClick={() => setFilter(c)} color={TODO_CAT_COLOR[c]}>{c}</Pill>)}
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        {shown.map((t) => (
+          <TodoItem key={t.id} todo={t} onToggle={() => patchTodoCfg(setConfig, t.id, { done: !t.done })} onDelete={() => removeTodoCfg(setConfig, t.id)} />
+        ))}
+      </div>
+      {shown.length === 0 && (
+        <div style={{ textAlign: "center", color: C.muted, fontSize: 12.5, padding: 30 }}>
+          {todos.length === 0 ? "Noch keine Todos. Tippe oben etwas ein oder nutze das Mikro." : "Keine Todos in dieser Kategorie."}
+        </div>
+      )}
+      {todos.length > 0 && <div style={{ textAlign: "center", color: C.muted, fontSize: 10.5, marginTop: 12, fontFamily: "'JetBrains Mono'" }}>{openCount} offen · {todos.length} gesamt</div>}
+    </div>
+  );
+}
+
 /* ============================== APP ============================== */
 export default function App() {
   const [session, setSession] = useState(undefined);
@@ -745,6 +890,7 @@ export default function App() {
 
   const TABS = [
     { id: "heute", label: "Heute", icon: Flame },
+    { id: "todos", label: "Todos", icon: ListTodo },
     { id: "training", label: "Training", icon: Dumbbell },
     { id: "essen", label: "Essen", icon: UtensilsCrossed },
     { id: "verlauf", label: "Verlauf", icon: TrendingUp },
@@ -767,7 +913,8 @@ export default function App() {
           </div>
         </div>
         <div style={{ padding: "0 14px" }}>
-          {tab === "heute" && <Heute day={day} setDay={setDay} />}
+          {tab === "heute" && <Heute day={day} setDay={setDay} config={data.config} setConfig={setConfig} />}
+          {tab === "todos" && <Todos config={data.config} setConfig={setConfig} />}
           {tab === "training" && <Training day={day} setDay={setDay} config={data.config} setConfig={setConfig} />}
           {tab === "essen" && <Essen day={day} setDay={setDay} config={data.config} setConfig={setConfig} />}
           {tab === "verlauf" && <Verlauf measurements={data.measurements} addMeasurement={addMeasurement} />}
