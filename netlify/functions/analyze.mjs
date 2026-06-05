@@ -59,6 +59,24 @@ Antworte NUR mit JSON, ohne Markdown: {"name": "kurze Beschreibung", "kcal": Zah
       return Response.json(jsonFrom(out));
     }
 
+    if (type === "todo") {
+      const today = (day && day.today) || new Date().toISOString().slice(0, 10);
+      const prompt = `Heutiges Datum: ${today}.
+Interpretiere die folgende Notiz des Nutzers und mache daraus GENAU EIN Todo.
+Notiz: "${text}"
+
+Wähle genau eine Kategorie, exakt so geschrieben: "Mädchen", "Memyself&I", "Co Parenting", "Shopping", "Ideen".
+- "Mädchen": alles rund um Tochter/Töchter, Kita/Schule, Kindertermine
+- "Co Parenting": Absprachen mit Ex-Partner:in, Übergaben, gemeinsame Kinder-Orga
+- "Memyself&I": eigene Termine, Gesundheit, Job, Privates
+- "Shopping": Einkaufen, Besorgungen
+- "Ideen": Gedanken/Ideen ohne klare Aufgabe
+Wenn ein Zeitpunkt genannt wird (z.B. "morgen", "Freitag", "am 12."), berechne das konkrete Datum relativ zum heutigen Datum und gib es als "date" im Format YYYY-MM-DD zurück. Wenn kein Datum genannt wird, gib null zurück.
+Antworte NUR mit JSON, ohne Markdown: {"title": "kurzer Todo-Text", "category": "eine der Kategorien", "date": "YYYY-MM-DD oder null"}`;
+      const out = await claude([{ role: "user", content: prompt }], 300);
+      return Response.json(jsonFrom(out));
+    }
+
     if (type === "day-analysis") {
       const prompt = `${PROFILE}
 
