@@ -6,7 +6,7 @@ import {
   Flame, Dumbbell, UtensilsCrossed, TrendingUp, Check, Plus, X, ArrowUp, Minus,
   Moon, Battery, Ruler, Scale, LogOut, Cloud, CloudOff, Camera, Sparkles, Footprints, Loader2,
   StickyNote, Activity, Waves, Bike, Clock,
-  ListTodo, Mic, MicOff, CalendarClock, Trash2,
+  ListTodo, Mic, MicOff, CalendarClock, Trash2, ChevronDown,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -75,6 +75,8 @@ const TODO_CAT_COLOR = {
   "Mädchen": "#F58EC1", "Memyself&I": "#C5F82A", "Co Parenting": "#5BC8F5",
   "Shopping": "#F5A623", "Ideen": "#B98CF5",
 };
+// Shopping-Abteilungen (Reihenfolge = Anzeige)
+const SHOP_DEPTS = ["Gemüse/Obst", "Getreideprodukte", "Milchprodukte", "Getränke", "TK", "Konserven", "Anderes", "Drogerie"];
 
 // Mahlzeiten-Slots zum Zuordnen der Quick-Logs (zusätzlich "Snack")
 const MEAL_SLOTS = [
@@ -212,6 +214,12 @@ const addTodoCfg = (setConfig, todo) => setConfig((prev) => ({ ...prev, todos: [
 const patchTodoCfg = (setConfig, id, patch) => setConfig((prev) => ({ ...prev, todos: (prev.todos || []).map((t) => (t.id === id ? { ...t, ...patch } : t)) }));
 const removeTodoCfg = (setConfig, id) => setConfig((prev) => ({ ...prev, todos: (prev.todos || []).filter((t) => t.id !== id) }));
 const isValidDate = (s) => typeof s === "string" && /^\d{4}-\d{2}-\d{2}$/.test(s);
+// Shopping: Artikel→Abteilung lernen (config.shopDeptMemory = { normKey: { dept, label } })
+const normItem = (s) => (s || "").toLowerCase().trim();
+const learnDept = (setConfig, title, dept) => setConfig((prev) => ({
+  ...prev,
+  shopDeptMemory: { ...(prev.shopDeptMemory || {}), [normItem(title)]: { dept, label: (title || "").trim() } },
+}));
 // Sortierung: offen vor erledigt, datierte vor undatierten, Datum aufsteigend, sonst Anlage-Reihenfolge
 const todoSort = (a, b) => {
   if (!!a.done !== !!b.done) return a.done ? 1 : -1;
@@ -717,7 +725,7 @@ function Verlauf({ measurements, addMeasurement }) {
 }
 
 /* ============================== TODOS ============================== */
-function TodoItem({ todo, onToggle, onDelete, showCategory = true }) {
+function TodoItem({ todo, onToggle, onDelete, onDept, showCategory = true }) {
   const col = TODO_CAT_COLOR[todo.category] || C.muted;
   return (
     <div style={{ display: "flex", alignItems: "flex-start", gap: 10, background: C.surface2, borderRadius: 10, padding: "10px 11px", animation: "slideUp .2s" }}>
@@ -729,6 +737,12 @@ function TodoItem({ todo, onToggle, onDelete, showCategory = true }) {
         <div style={{ display: "flex", alignItems: "center", gap: 9, marginTop: 5, flexWrap: "wrap" }}>
           {showCategory && (
             <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: ".02em", color: col, border: `1px solid ${col}`, borderRadius: 999, padding: "1px 7px", fontFamily: "'JetBrains Mono'" }}>{todo.category}</span>
+          )}
+          {onDept && (
+            <select value={todo.dept || "Anderes"} onChange={(e) => onDept(e.target.value)}
+              style={{ background: C.surface, border: `1px solid ${C.line}`, borderRadius: 7, color: C.muted, fontSize: 10, fontFamily: "'JetBrains Mono'", padding: "2px 4px", outline: "none", cursor: "pointer" }}>
+              {SHOP_DEPTS.map((d) => <option key={d} value={d}>{d}</option>)}
+            </select>
           )}
           {todo.date && (
             <span style={{ display: "flex", alignItems: "center", gap: 3, fontSize: 10.5, color: C.muted, fontFamily: "'JetBrains Mono'" }}><CalendarClock size={11} /> {prettyDate(todo.date)}</span>
@@ -746,8 +760,10 @@ function Todos({ config, setConfig }) {
   const [err, setErr] = useState("");
   const [filter, setFilter] = useState("Alle");
   const [listening, setListening] = useState(false);
+  const [showSugg, setShowSugg] = useState(false);
   const recRef = useRef(null);
   const todos = config.todos || [];
+  const memory = config.shopDeptMemory || {};
 
   const submit = async () => {
     if (!txt.trim() || busy) return;
@@ -755,11 +771,23 @@ function Todos({ config, setConfig }) {
     try {
       const r = await callAnalyze({ type: "todo", text: txt.trim(), day: { today: todayKey() } });
       const category = TODO_CATEGORIES.includes(r.category) ? r.category : "Ideen";
-      addTodoCfg(setConfig, { id: uid(), title: (r.title || txt.trim()).trim(), category, date: isValidDate(r.date) ? r.date : null, done: false, createdAt: new Date().toISOString() });
+      const title = (r.title || txt.trim()).trim();
+      let dept = null;
+      if (category === "Shopping") {
+        // gemerkte Zuordnung gewinnt, sonst KI-Vorschlag, sonst "Anderes"
+        dept = memory[normItem(title)]?.dept || (SHOP_DEPTS.includes(r.dept) ? r.dept : "Anderes");
+      }
+      addTodoCfg(setConfig, { id: uid(), title, category, date: isValidDate(r.date) ? r.date : null, dept, done: false, createdAt: new Date().toISOString() });
+      if (category === "Shopping") learnDept(setConfig, title, dept);
       setTxt("");
     } catch (e) { setErr(e.message); }
     setBusy(false);
   };
+
+  // Abteilung eines Shopping-Todos ändern → merken
+  const setTodoDept = (todo, dept) => { patchTodoCfg(setConfig, todo.id, { dept }); learnDept(setConfig, todo.title, dept); };
+  // Vorschlag (gemerkter Artikel) als neues Shopping-Todo anlegen
+  const addSuggestion = (label, dept) => addTodoCfg(setConfig, { id: uid(), title: label, category: "Shopping", date: null, dept, done: false, createdAt: new Date().toISOString() });
 
   const toggleVoice = () => {
     if (listening) { recRef.current?.stop(); setListening(false); return; }
@@ -776,6 +804,14 @@ function Todos({ config, setConfig }) {
 
   const shown = todos.filter((t) => filter === "Alle" || t.category === filter).slice().sort(todoSort);
   const openCount = todos.filter((t) => !t.done).length;
+
+  // Shopping-Ansicht: gruppiert nach Abteilung + Vorschläge aus dem Gedächtnis
+  const shopTodos = todos.filter((t) => t.category === "Shopping");
+  const openShopKeys = new Set(shopTodos.filter((t) => !t.done).map((t) => normItem(t.title)));
+  const suggestions = Object.entries(memory)
+    .filter(([k]) => !openShopKeys.has(k))
+    .map(([k, v]) => ({ key: k, label: v.label || k, dept: v.dept || "Anderes" }))
+    .sort((a, b) => (a.dept === b.dept ? a.label.localeCompare(b.label, "de") : SHOP_DEPTS.indexOf(a.dept) - SHOP_DEPTS.indexOf(b.dept)));
 
   return (
     <div style={{ animation: "slideUp .3s ease" }}>
@@ -807,15 +843,59 @@ function Todos({ config, setConfig }) {
         {TODO_CATEGORIES.map((c) => <Pill key={c} active={filter === c} onClick={() => setFilter(c)} color={TODO_CAT_COLOR[c]}>{c}</Pill>)}
       </div>
 
-      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-        {shown.map((t) => (
-          <TodoItem key={t.id} todo={t} onToggle={() => patchTodoCfg(setConfig, t.id, { done: !t.done })} onDelete={() => removeTodoCfg(setConfig, t.id)} />
-        ))}
-      </div>
-      {shown.length === 0 && (
-        <div style={{ textAlign: "center", color: C.muted, fontSize: 12.5, padding: 30 }}>
-          {todos.length === 0 ? "Noch keine Todos. Tippe oben etwas ein oder nutze das Mikro." : "Keine Todos in dieser Kategorie."}
-        </div>
+      {filter === "Shopping" ? (
+        <>
+          {suggestions.length > 0 && (
+            <Card style={{ padding: 0, marginBottom: 12, overflow: "hidden" }}>
+              <button onClick={() => setShowSugg((s) => !s)}
+                style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, background: "none", border: "none", cursor: "pointer", color: C.text, padding: "11px 13px", fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 13 }}>
+                <ChevronDown size={15} style={{ transform: showSugg ? "rotate(0)" : "rotate(-90deg)", transition: "transform .15s", color: C.muted }} />
+                Vorschläge
+                <span style={{ marginLeft: "auto", fontSize: 10, color: C.muted, fontFamily: "'JetBrains Mono'" }}>{suggestions.length}</span>
+              </button>
+              {showSugg && (
+                <div style={{ padding: "0 13px 13px", display: "flex", flexWrap: "wrap", gap: 6 }}>
+                  {suggestions.map((s) => (
+                    <button key={s.key} onClick={() => addSuggestion(s.label, s.dept)} title={s.dept}
+                      style={{ display: "flex", alignItems: "center", gap: 5, background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 999, padding: "6px 11px", cursor: "pointer", color: C.text, fontSize: 12, fontFamily: "'Sora'" }}>
+                      <Plus size={12} color={C.muted} /> {s.label}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </Card>
+          )}
+          {SHOP_DEPTS.map((d) => {
+            const items = shopTodos.filter((t) => (t.dept || "Anderes") === d).slice().sort(todoSort);
+            if (items.length === 0) return null;
+            return (
+              <div key={d} style={{ marginBottom: 14 }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: C.muted, margin: "0 2px 7px", letterSpacing: ".04em", textTransform: "uppercase" }}>{d}</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                  {items.map((t) => (
+                    <TodoItem key={t.id} todo={t} showCategory={false} onDept={(dep) => setTodoDept(t, dep)} onToggle={() => patchTodoCfg(setConfig, t.id, { done: !t.done })} onDelete={() => removeTodoCfg(setConfig, t.id)} />
+                  ))}
+                </div>
+              </div>
+            );
+          })}
+          {shopTodos.length === 0 && (
+            <div style={{ textAlign: "center", color: C.muted, fontSize: 12.5, padding: 30 }}>Noch keine Einkäufe. Tippe oben z.B. „Milch" oder „Klopapier".</div>
+          )}
+        </>
+      ) : (
+        <>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+            {shown.map((t) => (
+              <TodoItem key={t.id} todo={t} onToggle={() => patchTodoCfg(setConfig, t.id, { done: !t.done })} onDelete={() => removeTodoCfg(setConfig, t.id)} />
+            ))}
+          </div>
+          {shown.length === 0 && (
+            <div style={{ textAlign: "center", color: C.muted, fontSize: 12.5, padding: 30 }}>
+              {todos.length === 0 ? "Noch keine Todos. Tippe oben etwas ein oder nutze das Mikro." : "Keine Todos in dieser Kategorie."}
+            </div>
+          )}
+        </>
       )}
       {todos.length > 0 && <div style={{ textAlign: "center", color: C.muted, fontSize: 10.5, marginTop: 12, fontFamily: "'JetBrains Mono'" }}>{openCount} offen · {todos.length} gesamt</div>}
     </div>
