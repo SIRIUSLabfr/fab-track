@@ -6,7 +6,7 @@ import {
   Flame, Dumbbell, UtensilsCrossed, TrendingUp, Check, Plus, X, ArrowUp, Minus,
   Moon, Battery, Ruler, Scale, LogOut, Cloud, CloudOff, Camera, Sparkles, Footprints, Loader2,
   StickyNote, Activity, Waves, Bike, Clock,
-  ListTodo, Mic, MicOff, CalendarClock, Trash2, ChevronDown,
+  ListTodo, Mic, MicOff, CalendarClock, Trash2, ChevronDown, Droplet, Upload,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -67,7 +67,7 @@ const ACTIVITY_PRESETS = [
   { label: "Radfahren", icon: Bike },
 ];
 
-const TAB_IDS = ["heute", "todos", "training", "essen", "verlauf"];
+const TAB_IDS = ["heute", "todos", "training", "essen", "verlauf", "labor"];
 
 // Todo-Kategorien (Reihenfolge = Anzeige) + Farben
 const TODO_CATEGORIES = ["Mädchen", "Memyself&I", "Co Parenting", "Shopping", "Ideen"];
@@ -909,6 +909,170 @@ function Todos({ config, setConfig }) {
   );
 }
 
+/* ============================== LABOR / BLUTWERTE ============================== */
+const bloodNum = (v) => parseFloat(((v ?? "") + "").replace(",", ".").replace(/[^0-9.\-]/g, ""));
+const STATUS_COLOR = { gut: C.accent, grenzwertig: C.warn, kritisch: C.bad };
+
+function Blut({ config, setConfig, measurements }) {
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+  const [aBusy, setABusy] = useState(false);
+  const [analysis, setAnalysis] = useState(config.bloodAnalysis || null);
+  const [chartMarker, setChartMarker] = useState("");
+  const fileRef = useRef(null);
+
+  const asc = (config.bloodTests || []).slice().sort((a, b) => ((a.date || "") < (b.date || "") ? -1 : 1)); // älteste zuerst
+  const desc = asc.slice().reverse(); // neueste zuerst (Anzeige)
+
+  const upload = async (file) => {
+    if (!file || busy) return;
+    setBusy(true); setErr("");
+    try {
+      const b64 = await resizeImage(file);
+      const r = await callAnalyze({ type: "blood-extract", image: b64, mediaType: "image/jpeg" });
+      const markers = Array.isArray(r.markers) ? r.markers : [];
+      if (markers.length === 0) throw new Error("Keine Werte erkannt — schärferes Foto versuchen.");
+      const entry = { id: uid(), date: isValidDate(r.date) ? r.date : todayKey(), markers, createdAt: new Date().toISOString() };
+      setConfig((prev) => ({ ...prev, bloodTests: [...(prev.bloodTests || []), entry] }));
+    } catch (e) { setErr(e.message); }
+    setBusy(false);
+    if (fileRef.current) fileRef.current.value = "";
+  };
+
+  const removeTest = (id) => setConfig((prev) => ({ ...prev, bloodTests: (prev.bloodTests || []).filter((t) => t.id !== id) }));
+  const setTestDate = (id, date) => setConfig((prev) => ({ ...prev, bloodTests: (prev.bloodTests || []).map((t) => (t.id === id ? { ...t, date } : t)) }));
+  const removeMarker = (id, idx) => setConfig((prev) => ({ ...prev, bloodTests: (prev.bloodTests || []).map((t) => (t.id === id ? { ...t, markers: t.markers.filter((_, i) => i !== idx) } : t)) }));
+
+  const runAnalysis = async () => {
+    if (aBusy || asc.length === 0) return;
+    setABusy(true); setErr("");
+    try {
+      const r = await callAnalyze({ type: "blood-analysis", blood: asc.map((t) => ({ date: t.date, markers: t.markers })), context: { messungen: (measurements || []).slice(-6) } });
+      setAnalysis(r);
+      setConfig((prev) => ({ ...prev, bloodAnalysis: r }));
+    } catch (e) { setErr(e.message); }
+    setABusy(false);
+  };
+
+  const prevValue = (name, testDate) => {
+    const earlier = asc.filter((t) => (t.date || "") < testDate);
+    for (let i = earlier.length - 1; i >= 0; i--) {
+      const mk = (earlier[i].markers || []).find((m) => m.name === name);
+      if (mk) { const n = bloodNum(mk.value); if (!isNaN(n)) return n; }
+    }
+    return null;
+  };
+
+  const markerNames = [...new Set(asc.flatMap((t) => (t.markers || []).map((m) => m.name)))];
+  const chartData = chartMarker
+    ? asc.map((t) => { const mk = (t.markers || []).find((m) => m.name === chartMarker); const n = mk ? bloodNum(mk.value) : NaN; return { d: prettyDate(t.date || todayKey()), Wert: isNaN(n) ? null : n }; }).filter((x) => x.Wert != null)
+    : [];
+
+  return (
+    <div style={{ animation: "slideUp .3s ease" }}>
+      <Card style={{ padding: 14, marginBottom: 12, borderColor: C.accentDim, background: "rgba(197,248,42,.04)" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10 }}>
+          <Droplet size={15} color={C.accent} />
+          <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 16 }}>Blutwerte</span>
+          <span style={{ fontSize: 10, color: C.muted, fontFamily: "'JetBrains Mono'", marginLeft: "auto" }}>Befund-Foto → KI liest aus</span>
+        </div>
+        <button onClick={() => fileRef.current?.click()} disabled={busy}
+          style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: C.accent, border: "none", borderRadius: 11, padding: "12px", cursor: "pointer", color: "#111", fontWeight: 800, fontSize: 14, fontFamily: "'Bricolage Grotesque'", opacity: busy ? .6 : 1 }}>
+          {busy ? <Loader2 size={17} className="spin" /> : <Upload size={17} />} {busy ? "Lese Werte aus…" : "Befund-Foto hochladen"}
+        </button>
+        <input ref={fileRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={(e) => upload(e.target.files?.[0])} />
+        {err && <div style={{ marginTop: 8, fontSize: 11.5, color: C.warn }}>{err}</div>}
+        <div style={{ marginTop: 9, fontSize: 10, color: C.muted, lineHeight: 1.45 }}>Hinweis: Werte und Analyse dienen nur der persönlichen Übersicht und ersetzen keine ärztliche Beratung.</div>
+      </Card>
+
+      {asc.length > 0 && (
+        <Card style={{ padding: 14, marginBottom: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <Sparkles size={15} color={C.accent} />
+            <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 15 }}>Werte-Analyse</span>
+            <button onClick={runAnalysis} disabled={aBusy} style={{ marginLeft: "auto", background: C.accent, border: "none", borderRadius: 9, padding: "7px 13px", cursor: "pointer", color: "#111", fontWeight: 800, fontSize: 12, fontFamily: "'Bricolage Grotesque'", opacity: aBusy ? .5 : 1, display: "flex", alignItems: "center", gap: 5 }}>
+              {aBusy ? <Loader2 size={14} className="spin" /> : "Analysieren"}
+            </button>
+          </div>
+          {analysis && (
+            <div style={{ marginTop: 11, animation: "slideUp .25s" }}>
+              {analysis.summary && <div style={{ fontSize: 12.5, lineHeight: 1.55, marginBottom: 11 }}>{analysis.summary}</div>}
+              {Array.isArray(analysis.markers) && analysis.markers.map((m, i) => (
+                <div key={i} style={{ borderTop: `1px solid ${C.line}`, padding: "8px 0" }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ fontWeight: 700, fontSize: 12.5 }}>{m.name}</span>
+                    <span style={{ fontSize: 9.5, fontWeight: 700, color: STATUS_COLOR[m.status] || C.muted, border: `1px solid ${STATUS_COLOR[m.status] || C.muted}`, borderRadius: 999, padding: "1px 7px", fontFamily: "'JetBrains Mono'" }}>{m.status}</span>
+                    <span style={{ marginLeft: "auto", fontSize: 10.5, color: C.muted, fontFamily: "'JetBrains Mono'" }}>Trend: {m.trend}</span>
+                  </div>
+                  {m.outlook && <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.45, marginTop: 3 }}>{m.outlook}</div>}
+                </div>
+              ))}
+              {analysis.advice && <div style={{ marginTop: 11, fontSize: 12, lineHeight: 1.5, background: "rgba(197,248,42,.06)", border: `1px solid ${C.accentDim}`, borderRadius: 10, padding: "10px 12px" }}><b style={{ color: C.accent }}>Hebel:</b> {analysis.advice}</div>}
+            </div>
+          )}
+          {!analysis && <div style={{ marginTop: 9, fontSize: 11.5, color: C.muted }}>Beurteilt deine wichtigen Werte und prognostiziert die Entwicklung, wenn du so weitermachst.</div>}
+        </Card>
+      )}
+
+      {markerNames.length > 0 && (
+        <Card style={{ padding: "14px 8px 8px 14px", marginBottom: 12 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8, paddingRight: 6 }}>
+            <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 13, color: C.muted }}>VERLAUF</span>
+            <select value={chartMarker} onChange={(e) => setChartMarker(e.target.value)}
+              style={{ marginLeft: "auto", background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 8, color: C.text, fontSize: 12, fontFamily: "'Sora'", padding: "5px 8px", outline: "none", maxWidth: 200 }}>
+              <option value="">Wert wählen…</option>
+              {markerNames.map((n) => <option key={n} value={n}>{n}</option>)}
+            </select>
+          </div>
+          {chartData.length >= 2 ? (
+            <ResponsiveContainer width="100%" height={170}>
+              <LineChart data={chartData} margin={{ top: 4, right: 12, left: -18, bottom: 0 }}>
+                <CartesianGrid stroke={C.line} strokeDasharray="2 4" vertical={false} />
+                <XAxis dataKey="d" tick={{ fill: C.muted, fontSize: 9, fontFamily: "JetBrains Mono" }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: C.muted, fontSize: 9, fontFamily: "JetBrains Mono" }} axisLine={false} tickLine={false} domain={["auto", "auto"]} />
+                <Tooltip contentStyle={{ background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 10, fontSize: 12 }} labelStyle={{ color: C.muted }} />
+                <Line type="monotone" dataKey="Wert" stroke={C.accent} strokeWidth={2.5} dot={{ r: 3, fill: C.accent }} connectNulls />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <div style={{ fontSize: 11.5, color: C.muted, padding: "6px 6px 12px" }}>{chartMarker ? "Mindestens 2 Messungen für einen Verlauf nötig." : "Wert auswählen, um den Verlauf zu sehen."}</div>
+          )}
+        </Card>
+      )}
+
+      {desc.map((t) => (
+        <Card key={t.id} style={{ padding: 14, marginBottom: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+            <CalendarClock size={13} color={C.muted} />
+            <input type="date" value={t.date || ""} onChange={(e) => setTestDate(t.id, e.target.value)}
+              style={{ background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 8, color: C.text, fontSize: 12, fontFamily: "'JetBrains Mono'", padding: "4px 8px", outline: "none" }} />
+            <span style={{ fontSize: 10, color: C.muted, fontFamily: "'JetBrains Mono'", marginLeft: 4 }}>{(t.markers || []).length} Werte</span>
+            <button onClick={() => removeTest(t.id)} style={{ marginLeft: "auto", background: "none", border: "none", color: C.muted, cursor: "pointer", padding: 2 }}><Trash2 size={15} /></button>
+          </div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            {(t.markers || []).map((m, idx) => {
+              const cur = bloodNum(m.value);
+              const prev = prevValue(m.name, t.date || todayKey());
+              const arrow = prev != null && !isNaN(cur) ? (cur > prev ? "↑" : cur < prev ? "↓" : "→") : "";
+              return (
+                <div key={idx} style={{ display: "flex", alignItems: "baseline", gap: 8, padding: "5px 0", borderTop: idx === 0 ? "none" : `1px solid ${C.line}` }}>
+                  <span style={{ fontSize: 12, flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{m.name}</span>
+                  {arrow && <span style={{ fontSize: 11, color: C.muted, fontFamily: "'JetBrains Mono'" }}>{arrow}</span>}
+                  <span style={{ fontSize: 12.5, fontWeight: 700, fontFamily: "'JetBrains Mono'", whiteSpace: "nowrap" }}>{m.value}<span style={{ color: C.muted, fontWeight: 400 }}>{m.unit ? " " + m.unit : ""}</span></span>
+                  {m.ref && <span style={{ fontSize: 9.5, color: C.muted, fontFamily: "'JetBrains Mono'", whiteSpace: "nowrap" }}>({m.ref})</span>}
+                  <button onClick={() => removeMarker(t.id, idx)} style={{ background: "none", border: "none", color: C.muted, cursor: "pointer", padding: 2 }}><X size={13} /></button>
+                </div>
+              );
+            })}
+          </div>
+        </Card>
+      ))}
+
+      {asc.length === 0 && <div style={{ textAlign: "center", color: C.muted, fontSize: 12.5, padding: 30 }}>Noch keine Blutwerte. Lade oben ein Foto deines Laborbefunds hoch.</div>}
+    </div>
+  );
+}
+
 /* ============================== APP ============================== */
 export default function App() {
   const [session, setSession] = useState(undefined);
@@ -981,6 +1145,7 @@ export default function App() {
     { id: "training", label: "Training", icon: Dumbbell },
     { id: "essen", label: "Essen", icon: UtensilsCrossed },
     { id: "verlauf", label: "Verlauf", icon: TrendingUp },
+    { id: "labor", label: "Labor", icon: Droplet },
   ];
 
   return (
@@ -1005,6 +1170,7 @@ export default function App() {
           {tab === "training" && <Training day={day} setDay={setDay} config={data.config} setConfig={setConfig} />}
           {tab === "essen" && <Essen day={day} setDay={setDay} config={data.config} setConfig={setConfig} />}
           {tab === "verlauf" && <Verlauf measurements={data.measurements} addMeasurement={addMeasurement} />}
+          {tab === "labor" && <Blut config={data.config} setConfig={setConfig} measurements={data.measurements} />}
         </div>
       </div>
       <div style={{ position: "fixed", bottom: 0, left: 0, right: 0, background: "rgba(15,15,14,.92)", backdropFilter: "blur(12px)", borderTop: `1px solid ${C.line}`, display: "flex", justifyContent: "center", padding: "8px 0 14px" }}>

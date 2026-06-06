@@ -33,7 +33,7 @@ function jsonFrom(text) {
 export default async (req) => {
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
   try {
-    const { type, text, image, mediaType, day } = await req.json();
+    const { type, text, image, mediaType, day, blood, context } = await req.json();
 
     if (type === "meal-text") {
       const out = await claude([
@@ -56,6 +56,38 @@ Antworte NUR mit JSON, ohne Markdown: {"name": "kurze Beschreibung", "kcal": Zah
         },
       ];
       const out = await claude([{ role: "user", content }]);
+      return Response.json(jsonFrom(out));
+    }
+
+    if (type === "blood-extract") {
+      const content = [
+        { type: "image", source: { type: "base64", media_type: mediaType || "image/jpeg", data: image } },
+        {
+          type: "text",
+          text: `Das ist ein Laborbefund (Blutwerte). Lies ALLE Messwerte sauber aus.
+Gib NUR JSON zurück, ohne Markdown:
+{"date": "YYYY-MM-DD oder null", "markers": [{"name": "Markername wie im Befund", "value": "Wert als String", "unit": "Einheit oder null", "ref": "Referenzbereich oder null"}]}
+Zahlen mit Punkt als Dezimaltrenner. Wenn ein Entnahmedatum erkennbar ist, gib es zurück, sonst null.`,
+        },
+      ];
+      const out = await claude([{ role: "user", content }], 1500);
+      return Response.json(jsonFrom(out));
+    }
+
+    if (type === "blood-analysis") {
+      const prompt = `${PROFILE}
+
+Bisherige Laborwerte des Nutzers (chronologisch, älteste zuerst):
+${JSON.stringify(blood, null, 2)}
+
+Lebensstil-Kontext (Tracking: Gewicht/Bauch-Verlauf, Ziele):
+${JSON.stringify(context || {}, null, 2)}
+
+Aufgabe: Beurteile die wichtigsten Werte mit Fokus auf den Stoffwechsel (HbA1c, Nüchternglukose, Insulin/HOMA-IR, Triglyceride, HDL, LDL, Cortisol, Leberwerte wie GGT/ALT, CRP/Entzündung). Prognostiziere, wie sie sich vermutlich entwickeln, WENN der Nutzer so weitermacht.
+- Pro wichtigem Wert: aktueller Stand, Trend (falls mehrere Messungen vorliegen), erwartete Richtung, kurze Begründung.
+- Ehrlich, sachlich, deutsch, kein Lob-Gesäusel. Keine Diagnose. Dies ersetzt keine ärztliche Beratung.
+Antworte NUR mit JSON, ohne Markdown: {"summary": "2-3 Sätze Gesamtbild", "markers": [{"name": "Wert", "status": "gut|grenzwertig|kritisch", "trend": "fallend|stabil|steigend|unklar", "outlook": "kurze Prognose wenn so weiter"}], "advice": "1-3 konkrete Hebel"}`;
+      const out = await claude([{ role: "user", content: prompt }], 1300);
       return Response.json(jsonFrom(out));
     }
 
