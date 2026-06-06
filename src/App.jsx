@@ -13,7 +13,7 @@ import { supabase } from "./supabaseClient";
 /* ============================== THEME ============================== */
 const C = {
   bg: "#0F0F0E", surface: "#1A1A17", surface2: "#23231F", line: "#32322C",
-  accent: "#C5F82A", accentDim: "#7C9A1B", text: "#EDEDE6", muted: "#8C8C82", warn: "#F5A623",
+  accent: "#C5F82A", accentDim: "#7C9A1B", text: "#EDEDE6", muted: "#8C8C82", warn: "#F5A623", bad: "#F5564A",
 };
 
 const FONT_CSS = `
@@ -387,26 +387,53 @@ function DayAnalysis({ day }) {
 }
 
 /* ============================== HEUTE ============================== */
+const DEFAULT_GOALS = { protein: 150, kcalMax: 2600, steps: 8000 };
+// Makro-Zahl aus einem Favoriten-Text ziehen (z.B. "≈57g Protein, ≈610 kcal")
+const macroNum = (str, re) => { const m = (str || "").match(re); return m ? parseInt(m[1], 10) : 0; };
+// Ampelfarbe – "mehr ist besser" (Protein, Schritte) bzw. Budget (Kalorien)
+const colorMore = (v, goal) => (!v ? C.muted : v / goal >= 1 ? C.accent : v / goal >= 0.6 ? C.warn : C.bad);
+const colorBudget = (v, max) => (!v ? C.muted : v <= max ? C.accent : v <= max * 1.12 ? C.warn : C.bad);
+
+function GoalCard({ icon, label, value, goal, unit = "", color, hint }) {
+  const pct = goal ? Math.min(100, Math.round((value / goal) * 100)) : 0;
+  return (
+    <Card style={{ flex: 1, padding: 14 }}>
+      <div style={{ display: "flex", alignItems: "center", gap: 6, color: C.muted, fontSize: 11, fontWeight: 600, marginBottom: 8 }}>{icon} {label}</div>
+      <div style={{ fontFamily: "'Bricolage Grotesque'", fontSize: 26, fontWeight: 800, lineHeight: 1, color }}>
+        {value}<span style={{ fontSize: 13, color: C.muted, fontWeight: 500 }}> / {goal}{unit}</span>
+      </div>
+      <div style={{ height: 6, borderRadius: 999, background: C.surface2, marginTop: 9, overflow: "hidden" }}>
+        <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 999, transition: "width .3s" }} />
+      </div>
+      {hint && <div style={{ fontSize: 9.5, color: C.muted, marginTop: 6, fontFamily: "'JetBrains Mono'" }}>{hint}</div>}
+    </Card>
+  );
+}
+
 function Heute({ day, setDay, config, setConfig }) {
   const tk = todayKey();
   const dueTodos = (config.todos || []).filter((t) => !t.done && t.date && t.date <= tk).sort(todoSort);
-  const mealsDone = MEALS.filter((m) => (day.meals?.[m.id] || []).length > 0).length;
+  const goals = { ...DEFAULT_GOALS, ...(config.goals || {}) };
+  const quickLogs = day.quickLogs || [];
+  const checkedItems = MEALS.flatMap((m) => day.meals?.[m.id] || []);
+  const proteinToday = Math.round(quickLogs.reduce((s, l) => s + (l.protein || 0), 0) + checkedItems.reduce((s, it) => s + macroNum(it, /(\d+)\s*g\s*Protein/i), 0));
+  const kcalToday = Math.round(quickLogs.reduce((s, l) => s + (l.kcal || 0), 0) + checkedItems.reduce((s, it) => s + macroNum(it, /(\d+)\s*kcal/i), 0));
   const exDone = EXERCISES.filter((e) => day.exercises?.[e.id]?.done).length;
-  const kcalToday = (day.quickLogs || []).reduce((s, l) => s + (l.kcal || 0), 0);
-  // Quick-Logs mit ihrem Original-Index, nach Mahlzeit gefiltert (ohne meal => Snack)
-  const logsBy = (mealId) => (day.quickLogs || []).map((l, i) => ({ l, i })).filter(({ l }) => (l.meal || "snack") === mealId);
+  const activities = day.activities || [];
+  const steps = day.steps || 0;
   const [stepsEdit, setStepsEdit] = useState(false);
   const [stepsVal, setStepsVal] = useState("");
-
-  const toggleQuickMeal = (mealId, item) => setDay((prev) => {
-    const cur = prev.meals?.[mealId] || []; const has = cur.includes(item);
-    return { ...prev, meals: { ...prev.meals, [mealId]: has ? cur.filter((x) => x !== item) : [...cur, item] } };
-  });
-  const setMealNote = (mealId, text) => setDay((prev) => ({ ...prev, mealNotes: { ...prev.mealNotes, [mealId]: text } }));
   const saveSteps = () => {
     const n = parseInt(stepsVal.replace(/\D/g, ""), 10);
     if (!isNaN(n)) setDay((prev) => ({ ...prev, steps: n }));
     setStepsEdit(false); setStepsVal("");
+  };
+
+  // Read-only Essens-Zusammenfassung je Mahlzeit (Favoriten + zugeordnete Logs)
+  const mealSummary = (mealId) => {
+    const items = day.meals?.[mealId] || [];
+    const logs = quickLogs.filter((l) => (l.meal || "snack") === mealId).map((l) => l.name);
+    return [...items, ...logs];
   };
 
   return (
@@ -425,87 +452,57 @@ function Heute({ day, setDay, config, setConfig }) {
           </div>
         </Card>
       )}
+
       <div style={{ display: "flex", gap: 10, marginBottom: 10 }}>
-        <StatCard icon={<UtensilsCrossed size={13} />} label="ESSEN" value={mealsDone} suffix={`/${MEALS.length}`} highlight={mealsDone >= 3} />
-        <StatCard icon={<Dumbbell size={13} />} label="TRAINING" value={exDone} suffix={`/${EXERCISES.length}`} highlight={exDone > 0} />
+        <GoalCard icon={<Flame size={13} />} label="PROTEIN" value={proteinToday} goal={goals.protein} unit="g" color={colorMore(proteinToday, goals.protein)} hint={proteinToday >= goals.protein ? "Ziel erreicht" : `${Math.max(0, goals.protein - proteinToday)}g fehlen`} />
+        <GoalCard icon={<UtensilsCrossed size={13} />} label="KALORIEN" value={kcalToday} goal={goals.kcalMax} unit="" color={colorBudget(kcalToday, goals.kcalMax)} hint={kcalToday > goals.kcalMax ? `${kcalToday - goals.kcalMax} über Budget` : `${Math.max(0, goals.kcalMax - kcalToday)} frei`} />
       </div>
       <div style={{ display: "flex", gap: 10, marginBottom: 14 }}>
-        <StatCard icon={<Flame size={13} />} label="KCAL GELOGGT" value={kcalToday || "–"} highlight={false} />
-        <Card style={{ flex: 1, padding: 16, cursor: "pointer" }} >
-          <div onClick={() => !stepsEdit && setStepsEdit(true)}>
+        <Card style={{ flex: 1, padding: 14 }}>
+          <div onClick={() => !stepsEdit && (setStepsVal(steps ? String(steps) : ""), setStepsEdit(true))} style={{ cursor: "pointer" }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, color: C.muted, fontSize: 11, fontWeight: 600, marginBottom: 8 }}><Footprints size={13} /> SCHRITTE</div>
             {stepsEdit ? (
               <div style={{ display: "flex", gap: 5 }}>
-                <input autoFocus value={stepsVal} onChange={(e) => setStepsVal(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveSteps()} inputMode="numeric" placeholder={day.steps ? String(day.steps) : "0"}
-                  style={{ width: "100%", background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 8, padding: "4px 8px", color: C.text, fontSize: 17, fontWeight: 700, fontFamily: "'JetBrains Mono'", outline: "none" }} />
+                <input autoFocus value={stepsVal} onChange={(e) => setStepsVal(e.target.value)} onKeyDown={(e) => e.key === "Enter" && saveSteps()} onBlur={saveSteps} inputMode="numeric" placeholder="0"
+                  style={{ width: "100%", background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 8, padding: "3px 8px", color: C.text, fontSize: 22, fontWeight: 700, fontFamily: "'JetBrains Mono'", outline: "none" }} />
                 <button onClick={saveSteps} style={{ background: C.accent, border: "none", borderRadius: 8, padding: "0 10px", cursor: "pointer", color: "#111", fontWeight: 800 }}><Check size={15} /></button>
               </div>
             ) : (
-              <div style={{ fontFamily: "'Bricolage Grotesque'", fontSize: 30, fontWeight: 800, lineHeight: 1, color: (day.steps || 0) >= 8000 ? C.accent : C.text }}>
-                {day.steps ? day.steps.toLocaleString("de-DE") : "–"}
-              </div>
+              <>
+                <div style={{ fontFamily: "'Bricolage Grotesque'", fontSize: 26, fontWeight: 800, lineHeight: 1, color: colorMore(steps, goals.steps) }}>
+                  {steps ? steps.toLocaleString("de-DE") : "–"}<span style={{ fontSize: 13, color: C.muted, fontWeight: 500 }}> / {(goals.steps / 1000)}k</span>
+                </div>
+                <div style={{ height: 6, borderRadius: 999, background: C.surface2, marginTop: 9, overflow: "hidden" }}>
+                  <div style={{ width: `${Math.min(100, Math.round((steps / goals.steps) * 100))}%`, height: "100%", background: colorMore(steps, goals.steps), borderRadius: 999, transition: "width .3s" }} />
+                </div>
+              </>
             )}
           </div>
         </Card>
+        <GoalCard icon={<Dumbbell size={13} />} label="TRAINING" value={exDone} goal={EXERCISES.length} unit="" color={(exDone > 0 || activities.length > 0) ? C.accent : C.muted} hint={activities.length ? `+${activities.length} Aktivität` : "Übungen heute"} />
       </div>
 
       <DayAnalysis day={day} />
 
-      <div style={{ fontSize: 12, fontWeight: 700, color: C.muted, margin: "4px 2px 10px", letterSpacing: ".04em" }}>SCHNELL ABHAKEN — FAVORITEN</div>
-      {MEALS.map((m) => {
-        const sel = day.meals?.[m.id] || [];
-        return (
-          <Card key={m.id} style={{ padding: 12, marginBottom: 9 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-              <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 14 }}>{m.label}</span>
-              <span style={{ fontSize: 10, color: C.muted, fontFamily: "'JetBrains Mono'" }}>{m.time}</span>
-            </div>
-            {m.favorites.map((f) => {
-              const on = sel.includes(f);
-              return (
-                <button key={f} onClick={() => toggleQuickMeal(m.id, f)} style={{
-                  width: "100%", textAlign: "left", cursor: "pointer", display: "flex", gap: 9, alignItems: "flex-start",
-                  background: on ? "rgba(197,248,42,.08)" : "transparent", border: `1px solid ${on ? C.accentDim : C.line}`,
-                  borderRadius: 10, padding: "9px 10px", marginBottom: 5, transition: "all .15s",
-                }}>
-                  <span style={{ width: 18, height: 18, borderRadius: 6, flexShrink: 0, marginTop: 1, background: on ? C.accent : "transparent", border: `1.5px solid ${on ? C.accent : C.muted}`, display: "flex", alignItems: "center", justifyContent: "center" }}>{on && <Check size={13} color="#111" strokeWidth={3} />}</span>
-                  <span style={{ fontSize: 12.5, lineHeight: 1.35, color: on ? C.text : C.muted }}>{f}</span>
-                </button>
-              );
-            })}
-            {logsBy(m.id).length > 0 && (
-              <div style={{ display: "flex", flexDirection: "column", gap: 5, marginTop: 7 }}>
-                {logsBy(m.id).map(({ l, i }) => (
-                  <LogRow key={i} log={l} onPatch={(p) => patchLog(setDay, i, p)} onDelete={() => removeLogAt(setDay, i)} />
-                ))}
+      <div style={{ fontSize: 12, fontWeight: 700, color: C.muted, margin: "4px 2px 10px", letterSpacing: ".04em" }}>HEUTE GEGESSEN</div>
+      <Card style={{ padding: "6px 14px", marginBottom: 9 }}>
+        {MEALS.map((m, idx) => {
+          const names = mealSummary(m.id);
+          const note = day.mealNotes?.[m.id];
+          const done = names.length > 0;
+          return (
+            <div key={m.id} style={{ display: "flex", alignItems: "flex-start", gap: 10, padding: "9px 0", borderTop: idx === 0 ? "none" : `1px solid ${C.line}` }}>
+              <span style={{ width: 9, height: 9, borderRadius: 999, flexShrink: 0, marginTop: 4, background: done ? C.accent : "transparent", border: `1.5px solid ${done ? C.accent : C.muted}` }} />
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 13, color: done ? C.text : C.muted }}>{m.label}</div>
+                <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.35, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{names.length ? names.join(" · ") : "–"}</div>
+                {note && <div style={{ fontSize: 11, color: C.muted, fontStyle: "italic", marginTop: 2, display: "flex", alignItems: "center", gap: 4 }}><StickyNote size={10} /> {note}</div>}
               </div>
-            )}
-            <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 7 }}>
-              <StickyNote size={13} color={C.muted} style={{ flexShrink: 0 }} />
-              <input
-                value={day.mealNotes?.[m.id] || ""}
-                onChange={(e) => setMealNote(m.id, e.target.value)}
-                placeholder="Notiz – z.B. Erdnussbutter im Shake"
-                style={{ flex: 1, background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 9, padding: "7px 10px", color: C.text, fontSize: 12, fontFamily: "'Sora'", outline: "none" }}
-              />
             </div>
-          </Card>
-        );
-      })}
-
-      {logsBy("snack").length > 0 && (
-        <Card style={{ padding: 12, marginBottom: 9 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 8 }}>
-            <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 14 }}>Snacks & Sonstiges</span>
-            <span style={{ fontSize: 10, color: C.muted, fontFamily: "'JetBrains Mono'" }}>nicht zugeordnet</span>
-          </div>
-          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
-            {logsBy("snack").map(({ l, i }) => (
-              <LogRow key={i} log={l} onPatch={(p) => patchLog(setDay, i, p)} onDelete={() => removeLogAt(setDay, i)} />
-            ))}
-          </div>
-        </Card>
-      )}
+          );
+        })}
+      </Card>
+      <div style={{ fontSize: 10, color: C.muted, textAlign: "center", fontFamily: "'JetBrains Mono'", marginBottom: 4 }}>Bearbeiten im Essen-Tab</div>
     </div>
   );
 }
@@ -621,6 +618,7 @@ function Essen({ day, setDay, config, setConfig }) {
   });
   const addCustom = (mealId) => { if (!txt.trim()) return; setConfig((prev) => ({ ...prev, customFoods: { ...prev.customFoods, [mealId]: [...(prev.customFoods?.[mealId] || []), txt.trim()] } })); setTxt(""); setAdding(null); };
   const removeCustom = (mealId, item) => setConfig((prev) => ({ ...prev, customFoods: { ...prev.customFoods, [mealId]: (prev.customFoods?.[mealId] || []).filter((x) => x !== item) } }));
+  const setMealNote = (mealId, text) => setDay((prev) => ({ ...prev, mealNotes: { ...prev.mealNotes, [mealId]: text } }));
 
   return (
     <div style={{ animation: "slideUp .3s ease" }}>
@@ -660,6 +658,15 @@ function Essen({ day, setDay, config, setConfig }) {
             ) : (
               <button onClick={() => { setAdding(m.id); setTxt(""); }} style={{ display: "flex", alignItems: "center", gap: 5, marginTop: 9, background: "none", border: "none", color: C.muted, cursor: "pointer", fontSize: 11.5, fontWeight: 600, fontFamily: "'Sora'" }}><Plus size={14} /> eigene Option</button>
             )}
+            <div style={{ display: "flex", alignItems: "center", gap: 7, marginTop: 9 }}>
+              <StickyNote size={13} color={C.muted} style={{ flexShrink: 0 }} />
+              <input
+                value={day.mealNotes?.[m.id] || ""}
+                onChange={(e) => setMealNote(m.id, e.target.value)}
+                placeholder="Notiz – z.B. Erdnussbutter im Shake"
+                style={{ flex: 1, background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 9, padding: "7px 10px", color: C.text, fontSize: 12, fontFamily: "'Sora'", outline: "none" }}
+              />
+            </div>
           </Card>
         );
       })}
