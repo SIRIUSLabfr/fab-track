@@ -30,7 +30,7 @@ const FONT_CSS = `
 const MEALS = [
   {
     id: "fruehstueck", label: "Frühstück", time: "7–8 Uhr",
-    favorites: ["Protein-Shake: 500ml fettarme laktosefreie Milch + 5 Scoops Mammut Whey + 150–200g gefr. Beeren + 2 EL Dinkelkleie · ≈89g Protein, ≈720 kcal"],
+    favorites: ["Protein-Shake: 600ml fettarme laktosefreie Milch + 4 Scoops Mammut Whey (Shake ≈52g Protein) + 150–200g gefr. Beeren + 2 EL Dinkelkleie · ≈57g Protein, ≈610 kcal"],
     alternatives: ["Skyr/Magerquark (250g) + Beeren + Handvoll Nüsse", "2–3 Eier + Gemüse (Rührei/Omelett)", "Haferflocken (reduziert) + Whey + Leinsamen"],
   },
   {
