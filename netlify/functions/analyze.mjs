@@ -72,7 +72,8 @@ Wähle genau eine Kategorie, exakt so geschrieben: "Mädchen", "Memyself&I", "Co
 - "Shopping": Einkaufen, Besorgungen
 - "Ideen": Gedanken/Ideen ohne klare Aufgabe
 Wenn ein Zeitpunkt genannt wird (z.B. "morgen", "Freitag", "am 12."), berechne das konkrete Datum relativ zum heutigen Datum und gib es als "date" im Format YYYY-MM-DD zurück. Wenn kein Datum genannt wird, gib null zurück.
-Antworte NUR mit JSON, ohne Markdown: {"title": "kurzer Todo-Text", "category": "eine der Kategorien", "date": "YYYY-MM-DD oder null"}`;
+Wenn die Kategorie "Shopping" ist: gib als "title" NUR den reinen Artikel zurück (z.B. "Milch", nicht "Milch kaufen") und ordne eine Abteilung zu – exakt eine von: "Gemüse/Obst", "Getreideprodukte", "Milchprodukte", "Getränke", "TK", "Konserven", "Drogerie", "Anderes". Bei anderen Kategorien gib "dept": null zurück.
+Antworte NUR mit JSON, ohne Markdown: {"title": "kurzer Todo-Text", "category": "eine der Kategorien", "date": "YYYY-MM-DD oder null", "dept": "Abteilung oder null"}`;
       const out = await claude([{ role: "user", content: prompt }], 300);
       return Response.json(jsonFrom(out));
     }
