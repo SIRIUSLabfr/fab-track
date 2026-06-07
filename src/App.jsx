@@ -125,6 +125,22 @@ const resizeImage = (file) => new Promise((resolve, reject) => {
   img.src = URL.createObjectURL(file);
 });
 
+// Kleines Thumbnail als data-URL (für Fortschritts-Fotos, klein genug für die DB)
+const makeThumb = (file, max = 400, q = 0.7) => new Promise((resolve, reject) => {
+  const img = new Image();
+  img.onload = () => {
+    const scale = Math.min(1, max / Math.max(img.width, img.height));
+    const c = document.createElement("canvas");
+    c.width = Math.round(img.width * scale);
+    c.height = Math.round(img.height * scale);
+    c.getContext("2d").drawImage(img, 0, 0, c.width, c.height);
+    resolve(c.toDataURL("image/jpeg", q));
+    URL.revokeObjectURL(img.src);
+  };
+  img.onerror = reject;
+  img.src = URL.createObjectURL(file);
+});
+
 async function callAnalyze(payload) {
   const res = await fetch("/.netlify/functions/analyze", {
     method: "POST",
@@ -695,7 +711,7 @@ const dayMacros = (dObj) => {
 };
 const cutoffDate = (days) => { const d = new Date(); d.setDate(d.getDate() - days); return d.toISOString().slice(0, 10); };
 
-function Verlauf({ measurements, addMeasurement, days, patchDay }) {
+function Verlauf({ measurements, addMeasurement, days, patchDay, config, setConfig }) {
   const [showMeasure, setShowMeasure] = useState(false);
   const [w, setW] = useState(""); const [waist, setWaist] = useState("");
   const [sleep, setSleep] = useState(""); const [energy, setEnergy] = useState("");
@@ -704,6 +720,22 @@ function Verlauf({ measurements, addMeasurement, days, patchDay }) {
   const [tf, setTf] = useState(30);
   const [sumBusy, setSumBusy] = useState(false);
   const [sumErr, setSumErr] = useState("");
+  const [photoBusy, setPhotoBusy] = useState(false);
+  const [lightbox, setLightbox] = useState(null);
+  const photoRef = useRef(null);
+
+  const photos = (config.progressPhotos || []).slice().sort((a, b) => ((a.date || "") < (b.date || "") ? -1 : 1));
+  const addPhoto = async (file) => {
+    if (!file || photoBusy) return;
+    setPhotoBusy(true);
+    try {
+      const thumb = await makeThumb(file);
+      setConfig((prev) => ({ ...prev, progressPhotos: [...(prev.progressPhotos || []), { id: uid(), date: sel, thumb }] }));
+    } catch { /* ignore */ }
+    setPhotoBusy(false);
+    if (photoRef.current) photoRef.current.value = "";
+  };
+  const removePhoto = (id) => { setConfig((prev) => ({ ...prev, progressPhotos: (prev.progressPhotos || []).filter((p) => p.id !== id) })); setLightbox(null); };
 
   const save = () => {
     if (!w && !waist && !sleep && !energy) return;
@@ -861,7 +893,40 @@ function Verlauf({ measurements, addMeasurement, days, patchDay }) {
         </Card>
       )}
 
+      {/* Fortschritts-Fotos */}
+      <div style={{ fontSize: 12, fontWeight: 700, color: C.muted, margin: "8px 2px 8px", letterSpacing: ".04em" }}>FORTSCHRITTS-FOTOS</div>
+      <Card style={{ padding: 12, marginBottom: 13 }}>
+        <button onClick={() => photoRef.current?.click()} disabled={photoBusy}
+          style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 11, padding: "11px", cursor: "pointer", color: C.text, fontWeight: 700, fontSize: 13, fontFamily: "'Bricolage Grotesque'", opacity: photoBusy ? .6 : 1 }}>
+          {photoBusy ? <Loader2 size={16} className="spin" /> : <Camera size={16} />} Foto für {sel === todayKey() ? "heute" : prettyDate(sel)}
+        </button>
+        <input ref={photoRef} type="file" accept="image/*" style={{ display: "none" }} onChange={(e) => addPhoto(e.target.files?.[0])} />
+        {photos.length > 0 ? (
+          <div style={{ display: "flex", gap: 8, overflowX: "auto", marginTop: 11, paddingBottom: 4 }}>
+            {photos.map((p) => (
+              <button key={p.id} onClick={() => setLightbox(p)} style={{ flexShrink: 0, background: "none", border: "none", padding: 0, cursor: "pointer" }}>
+                <img src={p.thumb} alt={p.date} style={{ width: 84, height: 112, objectFit: "cover", borderRadius: 10, border: `1px solid ${C.line}`, display: "block" }} />
+                <div style={{ fontSize: 9.5, color: C.muted, fontFamily: "'JetBrains Mono'", marginTop: 3, textAlign: "center" }}>{prettyDate(p.date)}</div>
+              </button>
+            ))}
+          </div>
+        ) : (
+          <div style={{ fontSize: 11, color: C.muted, marginTop: 9 }}>Noch keine Fotos. Foto wird klein gespeichert (~400px) – schont den Speicher.</div>
+        )}
+      </Card>
+
       {measurements.length === 0 && dayKeys.length <= 1 && <div style={{ textAlign: "center", color: C.muted, fontSize: 12.5, padding: 20 }}>Noch keine Daten. Miss dich oben oder logge Essen/Training.</div>}
+
+      {lightbox && (
+        <div onClick={() => setLightbox(null)} style={{ position: "fixed", inset: 0, zIndex: 50, background: "rgba(0,0,0,.85)", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", padding: 20 }}>
+          <img src={lightbox.thumb} alt={lightbox.date} style={{ maxWidth: "92vw", maxHeight: "72vh", objectFit: "contain", borderRadius: 12 }} />
+          <div style={{ color: C.text, fontFamily: "'JetBrains Mono'", fontSize: 13, marginTop: 12 }}>{prettyDate(lightbox.date)}</div>
+          <div style={{ display: "flex", gap: 10, marginTop: 14 }}>
+            <button onClick={(e) => { e.stopPropagation(); removePhoto(lightbox.id); }} style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: `1px solid ${C.bad}`, borderRadius: 10, padding: "8px 14px", cursor: "pointer", color: C.bad, fontSize: 13, fontFamily: "'Bricolage Grotesque'", fontWeight: 700 }}><Trash2 size={14} /> Löschen</button>
+            <button onClick={() => setLightbox(null)} style={{ background: C.accent, border: "none", borderRadius: 10, padding: "8px 16px", cursor: "pointer", color: "#111", fontSize: 13, fontFamily: "'Bricolage Grotesque'", fontWeight: 800 }}>Schließen</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
@@ -1308,7 +1373,7 @@ export default function App() {
           {tab === "todos" && <Todos config={data.config} setConfig={setConfig} />}
           {tab === "training" && <Training day={day} setDay={setDay} config={data.config} setConfig={setConfig} />}
           {tab === "essen" && <Essen day={day} setDay={setDay} config={data.config} setConfig={setConfig} />}
-          {tab === "verlauf" && <Verlauf measurements={data.measurements} addMeasurement={addMeasurement} days={data.days} patchDay={patchDay} />}
+          {tab === "verlauf" && <Verlauf measurements={data.measurements} addMeasurement={addMeasurement} days={data.days} patchDay={patchDay} config={data.config} setConfig={setConfig} />}
           {tab === "labor" && <Blut config={data.config} setConfig={setConfig} measurements={data.measurements} />}
         </div>
       </div>
