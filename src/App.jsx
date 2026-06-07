@@ -675,15 +675,41 @@ function Essen({ day, setDay, config, setConfig }) {
 }
 
 /* ============================== VERLAUF ============================== */
-function Verlauf({ measurements, addMeasurement }) {
+const TIMEFRAMES = [{ label: "7T", days: 7 }, { label: "30T", days: 30 }, { label: "6M", days: 180 }, { label: "12M", days: 365 }];
+const METRICS = [
+  { key: "weight", label: "Gewicht", unit: "kg", color: C.accent, src: "m" },
+  { key: "waist", label: "Bauch", unit: "cm", color: C.warn, src: "m" },
+  { key: "sleep", label: "Schlaf", unit: "h", color: "#5BC8F5", src: "m" },
+  { key: "energy", label: "Energie", unit: "/10", color: "#B98CF5", src: "m" },
+  { key: "steps", label: "Schritte", unit: "", color: C.accent, src: "d" },
+  { key: "kcal", label: "Kalorien", unit: "kcal", color: C.warn, src: "d" },
+  { key: "protein", label: "Protein", unit: "g", color: C.accent, src: "d" },
+];
+const dayMacros = (dObj) => {
+  if (!dObj) return { kcal: 0, protein: 0 };
+  const logs = dObj.quickLogs || [];
+  const checked = MEALS.flatMap((m) => dObj.meals?.[m.id] || []);
+  const protein = Math.round(logs.reduce((s, l) => s + (l.protein || 0), 0) + checked.reduce((s, it) => s + macroNum(it, /(\d+)\s*g\s*Protein/i), 0));
+  const kcal = Math.round(logs.reduce((s, l) => s + (l.kcal || 0), 0) + checked.reduce((s, it) => s + macroNum(it, /(\d+)\s*kcal/i), 0));
+  return { kcal, protein };
+};
+const cutoffDate = (days) => { const d = new Date(); d.setDate(d.getDate() - days); return d.toISOString().slice(0, 10); };
+
+function Verlauf({ measurements, addMeasurement, days, patchDay }) {
+  const [showMeasure, setShowMeasure] = useState(false);
   const [w, setW] = useState(""); const [waist, setWaist] = useState("");
   const [sleep, setSleep] = useState(""); const [energy, setEnergy] = useState("");
+  const [sel, setSel] = useState(todayKey());
+  const [metric, setMetric] = useState(null);
+  const [tf, setTf] = useState(30);
+  const [sumBusy, setSumBusy] = useState(false);
+  const [sumErr, setSumErr] = useState("");
+
   const save = () => {
     if (!w && !waist && !sleep && !energy) return;
     addMeasurement({ date: todayKey(), weight: w ? parseFloat(w.replace(",", ".")) : null, waist: waist ? parseFloat(waist.replace(",", ".")) : null, sleep: sleep ? parseFloat(sleep.replace(",", ".")) : null, energy: energy ? parseInt(energy) : null });
-    setW(""); setWaist(""); setSleep(""); setEnergy("");
+    setW(""); setWaist(""); setSleep(""); setEnergy(""); setShowMeasure(false);
   };
-  const chartData = measurements.filter((m) => m.weight || m.waist).map((m) => ({ d: prettyDate(m.date), Gewicht: m.weight, Bauch: m.waist }));
   const field = (icon, ph, val, set, unit) => (
     <div style={{ flex: 1, background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 11, padding: "9px 11px" }}>
       <div style={{ display: "flex", alignItems: "center", gap: 5, color: C.muted, fontSize: 10, fontWeight: 600, marginBottom: 5 }}>{icon}{ph}</div>
@@ -693,40 +719,149 @@ function Verlauf({ measurements, addMeasurement }) {
       </div>
     </div>
   );
+
+  const measByDate = Object.fromEntries(measurements.map((m) => [m.date, m]));
+  const dayKeys = [...new Set([...Object.keys(days || {}), ...measurements.map((m) => m.date), todayKey()])].filter(Boolean).sort().reverse();
+
+  const selDay = days?.[sel];
+  const selMeas = measByDate[sel];
+  const selMacros = dayMacros(selDay);
+  const selExDone = EXERCISES.filter((e) => selDay?.exercises?.[e.id]?.done).length;
+  const selSteps = selDay?.steps || 0;
+  const selActs = selDay?.activities || [];
+
+  const genSummary = async () => {
+    if (sumBusy) return;
+    setSumBusy(true); setSumErr("");
+    try {
+      const mealsChecked = {}; MEALS.forEach((m) => { const s = selDay?.meals?.[m.id] || []; if (s.length) mealsChecked[m.label] = s; });
+      const r = await callAnalyze({ type: "day-summary", day: {
+        datum: sel, abgehakteMahlzeiten: mealsChecked, quickLogs: selDay?.quickLogs || [],
+        training: EXERCISES.filter((e) => selDay?.exercises?.[e.id]?.done).map((e) => e.name),
+        aktivitaeten: selActs, schritte: selSteps || null, messwerte: selMeas || null, summe: selMacros,
+      } });
+      patchDay(sel, { summaryText: r.text });
+    } catch (e) { setSumErr(e.message); }
+    setSumBusy(false);
+  };
+
+  // Chart-Daten für gewählten Messwert + Zeitraum
+  const metricDef = METRICS.find((m) => m.key === metric);
+  const cutoff = cutoffDate(tf);
+  let series = [];
+  if (metricDef) {
+    if (metricDef.src === "m") {
+      series = measurements.filter((m) => m.date >= cutoff && m[metric] != null).map((m) => ({ d: prettyDate(m.date), v: m[metric] }));
+    } else {
+      series = dayKeys.slice().reverse().filter((k) => k >= cutoff).map((k) => {
+        const dm = dayMacros(days?.[k]);
+        const v = metric === "steps" ? (days?.[k]?.steps || 0) : metric === "kcal" ? dm.kcal : dm.protein;
+        return { d: prettyDate(k), v };
+      }).filter((x) => x.v > 0);
+    }
+  }
+
+  const statTile = (label, value, unit) => (
+    <div style={{ flex: 1, background: C.surface2, borderRadius: 10, padding: "8px 10px", minWidth: 0 }}>
+      <div style={{ fontSize: 9.5, color: C.muted, fontWeight: 600, marginBottom: 3 }}>{label}</div>
+      <div style={{ fontFamily: "'JetBrains Mono'", fontSize: 15, fontWeight: 700 }}>{value}<span style={{ fontSize: 10, color: C.muted, fontWeight: 400 }}>{unit}</span></div>
+    </div>
+  );
+
   return (
     <div style={{ animation: "slideUp .3s ease" }}>
-      <Card style={{ padding: 14, marginBottom: 13 }}>
-        <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 16, marginBottom: 4 }}>Heute messen</div>
-        <div style={{ fontSize: 11, color: C.muted, marginBottom: 12 }}>1× / Woche reicht — morgens, nüchtern, gleicher Tag.</div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>{field(<Scale size={12} />, "GEWICHT", w, setW, "kg")}{field(<Ruler size={12} />, "BAUCH", waist, setWaist, "cm")}</div>
-        <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>{field(<Moon size={12} />, "SCHLAF", sleep, setSleep, "h")}{field(<Battery size={12} />, "ENERGIE", energy, setEnergy, "/10")}</div>
-        <button onClick={save} style={{ width: "100%", background: C.accent, border: "none", borderRadius: 11, padding: "12px", color: "#111", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "'Bricolage Grotesque'" }}>Speichern</button>
-      </Card>
-      {chartData.length >= 2 && (
-        <Card style={{ padding: "16px 8px 8px", marginBottom: 13 }}>
-          <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 13, marginLeft: 8, marginBottom: 10, color: C.muted }}>VERLAUF</div>
-          <ResponsiveContainer width="100%" height={180}>
-            <LineChart data={chartData} margin={{ top: 4, right: 12, left: -18, bottom: 0 }}>
-              <CartesianGrid stroke={C.line} strokeDasharray="2 4" vertical={false} />
-              <XAxis dataKey="d" tick={{ fill: C.muted, fontSize: 9, fontFamily: "JetBrains Mono" }} axisLine={false} tickLine={false} />
-              <YAxis tick={{ fill: C.muted, fontSize: 9, fontFamily: "JetBrains Mono" }} axisLine={false} tickLine={false} domain={["auto", "auto"]} />
-              <Tooltip contentStyle={{ background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 10, fontSize: 12 }} labelStyle={{ color: C.muted }} />
-              <Line type="monotone" dataKey="Gewicht" stroke={C.accent} strokeWidth={2.5} dot={{ r: 3, fill: C.accent }} connectNulls />
-              <Line type="monotone" dataKey="Bauch" stroke={C.warn} strokeWidth={2.5} dot={{ r: 3, fill: C.warn }} connectNulls />
-            </LineChart>
-          </ResponsiveContainer>
+      {/* Heute messen – aufklappbar */}
+      {!showMeasure ? (
+        <button onClick={() => setShowMeasure(true)} style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: C.accent, border: "none", borderRadius: 12, padding: "13px", cursor: "pointer", color: "#111", fontWeight: 800, fontSize: 15, fontFamily: "'Bricolage Grotesque'", marginBottom: 14 }}>
+          <Plus size={17} /> Heute messen
+        </button>
+      ) : (
+        <Card style={{ padding: 14, marginBottom: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
+            <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 16 }}>Heute messen</span>
+            <button onClick={() => setShowMeasure(false)} style={{ marginLeft: "auto", background: "none", border: "none", color: C.muted, cursor: "pointer", padding: 2 }}><X size={17} /></button>
+          </div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>{field(<Scale size={12} />, "GEWICHT", w, setW, "kg")}{field(<Ruler size={12} />, "BAUCH", waist, setWaist, "cm")}</div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>{field(<Moon size={12} />, "SCHLAF", sleep, setSleep, "h")}{field(<Battery size={12} />, "ENERGIE", energy, setEnergy, "/10")}</div>
+          <button onClick={save} style={{ width: "100%", background: C.accent, border: "none", borderRadius: 11, padding: "12px", color: "#111", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "'Bricolage Grotesque'" }}>Speichern</button>
         </Card>
       )}
-      {[...measurements].reverse().slice(0, 12).map((m, i) => (
-        <Card key={i} style={{ padding: "11px 14px", marginBottom: 7, display: "flex", alignItems: "center", gap: 14 }}>
-          <span style={{ fontSize: 11, color: C.muted, fontFamily: "'JetBrains Mono'", minWidth: 54 }}>{prettyDate(m.date)}</span>
-          {m.weight && <span style={{ fontSize: 12.5, fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{m.weight}<span style={{ color: C.muted, fontWeight: 400 }}>kg</span></span>}
-          {m.waist && <span style={{ fontSize: 12.5, fontFamily: "'JetBrains Mono'", fontWeight: 700 }}>{m.waist}<span style={{ color: C.muted, fontWeight: 400 }}>cm</span></span>}
-          {m.sleep && <span style={{ fontSize: 12.5, fontFamily: "'JetBrains Mono'", color: C.muted }}><Moon size={11} style={{ verticalAlign: -1 }} /> {m.sleep}h</span>}
-          {m.energy && <span style={{ fontSize: 12.5, fontFamily: "'JetBrains Mono'", color: C.muted, marginLeft: "auto" }}><Battery size={11} style={{ verticalAlign: -1 }} /> {m.energy}/10</span>}
+
+      {/* Tag wählen */}
+      <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4, marginBottom: 10 }}>
+        {dayKeys.slice(0, 30).map((k) => {
+          const on = k === sel;
+          return (
+            <button key={k} onClick={() => setSel(k)} style={{ flexShrink: 0, background: on ? C.accent : C.surface2, border: `1px solid ${on ? C.accent : C.line}`, borderRadius: 10, padding: "6px 10px", cursor: "pointer", color: on ? "#111" : C.muted, fontSize: 11, fontWeight: 700, fontFamily: "'JetBrains Mono'" }}>
+              {k === todayKey() ? "Heute" : prettyDate(k)}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Tagesdetail */}
+      <Card style={{ padding: 14, marginBottom: 12 }}>
+        <div style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 16, marginBottom: 10 }}>{sel === todayKey() ? "Heute" : prettyDate(sel)}</div>
+        <div style={{ display: "flex", gap: 7, marginBottom: 8 }}>
+          {statTile("KALORIEN", selMacros.kcal || "–", "")}
+          {statTile("PROTEIN", selMacros.protein || "–", "g")}
+          {statTile("SCHRITTE", selSteps ? selSteps.toLocaleString("de-DE") : "–", "")}
+          {statTile("TRAINING", selExDone + (selActs.length ? "+" + selActs.length : ""), "")}
+        </div>
+        {selMeas && (
+          <div style={{ display: "flex", gap: 7, marginBottom: 8 }}>
+            {statTile("GEWICHT", selMeas.weight ?? "–", "kg")}
+            {statTile("BAUCH", selMeas.waist ?? "–", "cm")}
+            {statTile("SCHLAF", selMeas.sleep ?? "–", "h")}
+            {statTile("ENERGIE", selMeas.energy ?? "–", "/10")}
+          </div>
+        )}
+        {/* KI-Zusammenfassung – immer präsent */}
+        <div style={{ borderTop: `1px solid ${C.line}`, marginTop: 4, paddingTop: 10 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 6 }}>
+            <Sparkles size={13} color={C.accent} />
+            <span style={{ fontSize: 11, fontWeight: 700, color: C.muted, letterSpacing: ".03em" }}>KI-ZUSAMMENFASSUNG</span>
+            <button onClick={genSummary} disabled={sumBusy} style={{ marginLeft: "auto", background: "none", border: `1px solid ${C.line}`, borderRadius: 8, padding: "3px 9px", cursor: "pointer", color: C.muted, fontSize: 10.5, fontFamily: "'JetBrains Mono'", display: "flex", alignItems: "center", gap: 4 }}>
+              {sumBusy ? <Loader2 size={12} className="spin" /> : (selDay?.summaryText ? "Aktualisieren" : "Erstellen")}
+            </button>
+          </div>
+          {sumErr && <div style={{ fontSize: 11, color: C.warn, marginBottom: 4 }}>{sumErr}</div>}
+          <div style={{ fontSize: 12.5, lineHeight: 1.5, color: selDay?.summaryText ? C.text : C.muted }}>
+            {selDay?.summaryText || "Noch keine Zusammenfassung — oben auf Erstellen tippen."}
+          </div>
+        </div>
+      </Card>
+
+      {/* Messwerte – anklicken für Verlaufskurve */}
+      <div style={{ fontSize: 12, fontWeight: 700, color: C.muted, margin: "4px 2px 8px", letterSpacing: ".04em" }}>VERLAUFSKURVEN</div>
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+        {METRICS.map((m) => <Pill key={m.key} active={metric === m.key} onClick={() => setMetric(metric === m.key ? null : m.key)} color={m.color}>{m.label}</Pill>)}
+      </div>
+      {metricDef && (
+        <Card style={{ padding: "14px 8px 10px 12px", marginBottom: 13 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8, paddingRight: 6 }}>
+            <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 700, fontSize: 13 }}>{metricDef.label}</span>
+            <div style={{ marginLeft: "auto", display: "flex", gap: 4 }}>
+              {TIMEFRAMES.map((t) => <Pill key={t.days} active={tf === t.days} onClick={() => setTf(t.days)}>{t.label}</Pill>)}
+            </div>
+          </div>
+          {series.length >= 2 ? (
+            <ResponsiveContainer width="100%" height={180}>
+              <LineChart data={series} margin={{ top: 4, right: 12, left: -18, bottom: 0 }}>
+                <CartesianGrid stroke={C.line} strokeDasharray="2 4" vertical={false} />
+                <XAxis dataKey="d" tick={{ fill: C.muted, fontSize: 9, fontFamily: "JetBrains Mono" }} axisLine={false} tickLine={false} minTickGap={20} />
+                <YAxis tick={{ fill: C.muted, fontSize: 9, fontFamily: "JetBrains Mono" }} axisLine={false} tickLine={false} domain={["auto", "auto"]} />
+                <Tooltip contentStyle={{ background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 10, fontSize: 12 }} labelStyle={{ color: C.muted }} formatter={(v) => [`${v}${metricDef.unit}`, metricDef.label]} />
+                <Line type="monotone" dataKey="v" name={metricDef.label} stroke={metricDef.color} strokeWidth={2.5} dot={{ r: 3, fill: metricDef.color }} connectNulls />
+              </LineChart>
+            </ResponsiveContainer>
+          ) : (
+            <div style={{ fontSize: 11.5, color: C.muted, padding: "6px 6px 10px" }}>Zu wenig Daten im Zeitraum (min. 2 Werte).</div>
+          )}
         </Card>
-      ))}
-      {measurements.length === 0 && <div style={{ textAlign: "center", color: C.muted, fontSize: 12.5, padding: 30 }}>Noch keine Messungen. Bauch &gt; Waage als Indikator.</div>}
+      )}
+
+      {measurements.length === 0 && dayKeys.length <= 1 && <div style={{ textAlign: "center", color: C.muted, fontSize: 12.5, padding: 20 }}>Noch keine Daten. Miss dich oben oder logge Essen/Training.</div>}
     </div>
   );
 }
@@ -1134,6 +1269,10 @@ export default function App() {
   }), [dayKey]);
   const setConfig = useCallback((updater) => setData((prev) => ({ ...prev, config: typeof updater === "function" ? updater(prev.config) : updater })), []);
   const addMeasurement = useCallback((m) => setData((prev) => ({ ...prev, measurements: [...prev.measurements.filter((x) => x.date !== m.date), m].sort((a, b) => a.date.localeCompare(b.date)) })), []);
+  const patchDay = useCallback((dk, patch) => setData((prev) => {
+    const cur = prev.days[dk] || { meals: {}, exercises: {} };
+    return { ...prev, days: { ...prev.days, [dk]: { ...cur, ...patch } } };
+  }), []);
 
   if (session === undefined) return <Splash />;
   if (!session) return <Auth />;
@@ -1169,7 +1308,7 @@ export default function App() {
           {tab === "todos" && <Todos config={data.config} setConfig={setConfig} />}
           {tab === "training" && <Training day={day} setDay={setDay} config={data.config} setConfig={setConfig} />}
           {tab === "essen" && <Essen day={day} setDay={setDay} config={data.config} setConfig={setConfig} />}
-          {tab === "verlauf" && <Verlauf measurements={data.measurements} addMeasurement={addMeasurement} />}
+          {tab === "verlauf" && <Verlauf measurements={data.measurements} addMeasurement={addMeasurement} days={data.days} patchDay={patchDay} />}
           {tab === "labor" && <Blut config={data.config} setConfig={setConfig} measurements={data.measurements} />}
         </div>
       </div>
