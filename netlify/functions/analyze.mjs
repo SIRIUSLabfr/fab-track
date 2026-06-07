@@ -59,6 +59,18 @@ Antworte NUR mit JSON, ohne Markdown: {"name": "kurze Beschreibung", "kcal": Zah
       return Response.json(jsonFrom(out));
     }
 
+    if (type === "day-summary") {
+      const prompt = `${PROFILE}
+
+Tagesdaten des Nutzers:
+${JSON.stringify(day, null, 2)}
+
+Schreibe eine sehr kurze Tageszusammenfassung in NUR 3-4 Sätzen: Ernährung/Protein, Bewegung/Training/Schritte, ggf. Messwerte. Sachlich, deutsch, kein Lob-Gesäusel, keine Aufzählung, kein Markdown.
+Antworte NUR mit JSON: {"text": "die 3-4 Sätze"}`;
+      const out = await claude([{ role: "user", content: prompt }], 350);
+      return Response.json(jsonFrom(out));
+    }
+
     if (type === "blood-extract") {
       const content = [
         { type: "image", source: { type: "base64", media_type: mediaType || "image/jpeg", data: image } },
