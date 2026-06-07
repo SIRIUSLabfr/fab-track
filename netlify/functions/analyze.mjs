@@ -5,7 +5,7 @@ const API = "https://api.anthropic.com/v1/messages";
 
 const PROFILE = `Nutzerprofil: Mann, 37 Jahre, 2,00 m, ~140 kg, Insulinresistenz (HOMA-IR 3,6), Cortisol leicht erhöht, ADHS (Lisdexamfetamin 50mg morgens, Appetit tagsüber unterdrückt).
 Ziele: ca. 2.300–2.600 kcal/Tag, Protein mindestens 150 g, Kohlenhydrate moderat und insulinfreundlich (wenig Zucker/Weißmehl), abends leicht. Krafttraining im Keller, Schrittziel ~8.000/Tag.
-Wichtig: keine Moralpredigten, kein Lob-Gesäusel, direkt und sachlich auf Deutsch.`;
+Ton: direkt und sachlich auf Deutsch, keine Moralpredigten und keine leere Schmeichelei. Aber: erreichte Ziele klar als Erfolg benennen und ehrlich bestätigen — Anerkennung ist verdient, wenn die Zahlen stimmen, und wirkt motivierender als reines Defizit-Aufzählen.`;
 
 async function claude(messages, maxTokens = 600) {
   const res = await fetch(API, {
@@ -65,7 +65,9 @@ Antworte NUR mit JSON, ohne Markdown: {"name": "kurze Beschreibung", "kcal": Zah
 Tagesdaten des Nutzers:
 ${JSON.stringify(day, null, 2)}
 
-Schreibe eine sehr kurze Tageszusammenfassung in NUR 3-4 Sätzen: Ernährung/Protein, Bewegung/Training/Schritte, ggf. Messwerte. Sachlich, deutsch, kein Lob-Gesäusel, keine Aufzählung, kein Markdown.
+Schreibe eine kurze, differenzierte Tageszusammenfassung in 3-4 Sätzen zu Ernährung/Protein, Bewegung/Training/Schritte und ggf. Messwerten.
+Gleiche die Werte mit den Zielen ab (kcal 2.300–2.600, Protein ≥150 g, Schritte ~8.000, Krafttraining).
+Wichtig — differenziert sein: Erreichte oder fast erreichte Ziele zuerst klar als Erfolg benennen und ehrlich bestätigen, dann offene Punkte sachlich anmerken. Wenn die meisten Ziele erreicht sind, mach das deutlich ("starker Tag" o.ä.) und motiviere; reiß keinen guten Tag durch Defizit-Fokus klein. Wenn wenig erreicht wurde, bleib sachlich-konstruktiv ohne Vorwurf. Keine Aufzählung, kein Markdown.
 Antworte NUR mit JSON: {"text": "die 3-4 Sätze"}`;
       const out = await claude([{ role: "user", content: prompt }], 350);
       return Response.json(jsonFrom(out));
