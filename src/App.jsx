@@ -6,7 +6,7 @@ import {
   Flame, Dumbbell, UtensilsCrossed, TrendingUp, Check, Plus, X, ArrowUp, Minus,
   Moon, Battery, Ruler, Scale, LogOut, Cloud, CloudOff, Camera, Sparkles, Footprints, Loader2,
   StickyNote, Activity, Waves, Bike, Clock,
-  ListTodo, Mic, MicOff, CalendarClock, Trash2, ChevronDown, Droplet, Upload,
+  ListTodo, Mic, MicOff, CalendarClock, Trash2, ChevronDown, Droplet, Upload, Target,
 } from "lucide-react";
 import { supabase } from "./supabaseClient";
 
@@ -724,6 +724,23 @@ function Verlauf({ measurements, addMeasurement, days, patchDay, config, setConf
   const [lightbox, setLightbox] = useState(null);
   const photoRef = useRef(null);
 
+  const gg = { ...DEFAULT_GOALS, ...(config.goals || {}) };
+  const [showGoals, setShowGoals] = useState(false);
+  const [gProtein, setGProtein] = useState(String(gg.protein));
+  const [gKcal, setGKcal] = useState(String(gg.kcalMax));
+  const [gSteps, setGSteps] = useState(String(gg.steps));
+  const [gPersonal, setGPersonal] = useState(gg.personal || "");
+  const saveGoals = () => {
+    setConfig((prev) => ({ ...prev, goals: {
+      ...(prev.goals || {}),
+      protein: parseInt(gProtein, 10) || DEFAULT_GOALS.protein,
+      kcalMax: parseInt(gKcal, 10) || DEFAULT_GOALS.kcalMax,
+      steps: parseInt(gSteps, 10) || DEFAULT_GOALS.steps,
+      personal: gPersonal.trim(),
+    } }));
+    setShowGoals(false);
+  };
+
   const photos = (config.progressPhotos || []).slice().sort((a, b) => ((a.date || "") < (b.date || "") ? -1 : 1));
   const addPhoto = async (file) => {
     if (!file || photoBusy) return;
@@ -767,11 +784,18 @@ function Verlauf({ measurements, addMeasurement, days, patchDay, config, setConf
     setSumBusy(true); setSumErr("");
     try {
       const mealsChecked = {}; MEALS.forEach((m) => { const s = selDay?.meals?.[m.id] || []; if (s.length) mealsChecked[m.label] = s; });
-      const r = await callAnalyze({ type: "day-summary", day: {
-        datum: sel, abgehakteMahlzeiten: mealsChecked, quickLogs: selDay?.quickLogs || [],
-        training: EXERCISES.filter((e) => selDay?.exercises?.[e.id]?.done).map((e) => e.name),
-        aktivitaeten: selActs, schritte: selSteps || null, messwerte: selMeas || null, summe: selMacros,
-      } });
+      const g = { ...DEFAULT_GOALS, ...(config.goals || {}) };
+      const ba = config.bloodAnalysis;
+      const r = await callAnalyze({
+        type: "day-summary",
+        ziele: { proteinZiel_g: g.protein, kcalMax: g.kcalMax, schritteZiel: g.steps, persoenlich: (g.personal || "").trim() || null },
+        laborEmpfehlung: ba ? { gesamtbild: ba.summary, hebel: ba.advice, werte: (ba.markers || []).map((m) => ({ name: m.name, status: m.status })) } : null,
+        day: {
+          datum: sel, abgehakteMahlzeiten: mealsChecked, quickLogs: selDay?.quickLogs || [],
+          training: EXERCISES.filter((e) => selDay?.exercises?.[e.id]?.done).map((e) => e.name),
+          aktivitaeten: selActs, schritte: selSteps || null, messwerte: selMeas || null, summe: selMacros,
+        },
+      });
       patchDay(sel, { summaryText: r.text });
     } catch (e) { setSumErr(e.message); }
     setSumBusy(false);
@@ -816,6 +840,32 @@ function Verlauf({ measurements, addMeasurement, days, patchDay, config, setConf
           <div style={{ display: "flex", gap: 8, marginBottom: 8 }}>{field(<Scale size={12} />, "GEWICHT", w, setW, "kg")}{field(<Ruler size={12} />, "BAUCH", waist, setWaist, "cm")}</div>
           <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>{field(<Moon size={12} />, "SCHLAF", sleep, setSleep, "h")}{field(<Battery size={12} />, "ENERGIE", energy, setEnergy, "/10")}</div>
           <button onClick={save} style={{ width: "100%", background: C.accent, border: "none", borderRadius: 11, padding: "12px", color: "#111", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "'Bricolage Grotesque'" }}>Speichern</button>
+        </Card>
+      )}
+
+      {/* Meine Ziele – aufklappbar */}
+      {!showGoals ? (
+        <button onClick={() => setShowGoals(true)} style={{ width: "100%", display: "flex", alignItems: "center", gap: 8, background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 12, padding: "11px 13px", cursor: "pointer", color: C.text, fontWeight: 700, fontSize: 13, fontFamily: "'Bricolage Grotesque'", marginBottom: 14 }}>
+          <Target size={15} color={C.accent} /> Meine Ziele
+          <span style={{ marginLeft: "auto", fontFamily: "'JetBrains Mono'", fontSize: 10.5, color: C.muted, whiteSpace: "nowrap" }}>{gg.protein}g P · {gg.kcalMax} kcal · {(gg.steps || 0).toLocaleString("de-DE")} Schr.</span>
+        </button>
+      ) : (
+        <Card style={{ padding: 14, marginBottom: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", marginBottom: 10 }}>
+            <Target size={15} color={C.accent} />
+            <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 16, marginLeft: 7 }}>Meine Ziele</span>
+            <button onClick={() => setShowGoals(false)} style={{ marginLeft: "auto", background: "none", border: "none", color: C.muted, cursor: "pointer", padding: 2 }}><X size={17} /></button>
+          </div>
+          <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+            {field(<Flame size={12} />, "PROTEIN", gProtein, setGProtein, "g")}
+            {field(<Flame size={12} />, "KCAL MAX", gKcal, setGKcal, "")}
+            {field(<Footprints size={12} />, "SCHRITTE", gSteps, setGSteps, "")}
+          </div>
+          <div style={{ fontSize: 10.5, color: C.muted, fontWeight: 600, marginBottom: 5 }}>PERSÖNLICHE ZIELE</div>
+          <textarea value={gPersonal} onChange={(e) => setGPersonal(e.target.value)} rows={3} placeholder="z.B. Gewicht auf 120 kg, Insulinresistenz senken, mehr Energie, abends weniger naschen…"
+            style={{ width: "100%", boxSizing: "border-box", background: C.surface2, border: `1px solid ${C.line}`, borderRadius: 11, padding: "10px 11px", color: C.text, fontSize: 13, fontFamily: "'Bricolage Grotesque'", outline: "none", resize: "vertical", marginBottom: 8 }} />
+          <div style={{ fontSize: 10.5, color: C.muted, marginBottom: 11, lineHeight: 1.45 }}>Fließt zusammen mit deiner Laborempfehlung in die KI-Tagesanalyse ein – sie zieht dann ein Fazit, ob der Tag dich deinen Zielen näher bringt.</div>
+          <button onClick={saveGoals} style={{ width: "100%", background: C.accent, border: "none", borderRadius: 11, padding: "12px", color: "#111", fontWeight: 800, fontSize: 14, cursor: "pointer", fontFamily: "'Bricolage Grotesque'" }}>Ziele speichern</button>
         </Card>
       )}
 
@@ -1147,7 +1197,8 @@ function Blut({ config, setConfig, measurements }) {
     if (aBusy || asc.length === 0) return;
     setABusy(true); setErr("");
     try {
-      const r = await callAnalyze({ type: "blood-analysis", blood: asc.map((t) => ({ date: t.date, markers: t.markers })), context: { messungen: (measurements || []).slice(-6) } });
+      const g = { ...DEFAULT_GOALS, ...(config.goals || {}) };
+      const r = await callAnalyze({ type: "blood-analysis", blood: asc.map((t) => ({ date: t.date, markers: t.markers })), context: { messungen: (measurements || []).slice(-6), ziele: { proteinZiel_g: g.protein, kcalMax: g.kcalMax, schritteZiel: g.steps, persoenlich: (g.personal || "").trim() || null } } });
       setAnalysis(r);
       setConfig((prev) => ({ ...prev, bloodAnalysis: r }));
     } catch (e) { setErr(e.message); }

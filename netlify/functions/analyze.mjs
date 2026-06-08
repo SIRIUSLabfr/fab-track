@@ -33,7 +33,7 @@ function jsonFrom(text) {
 export default async (req) => {
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
   try {
-    const { type, text, image, mediaType, day, blood, context } = await req.json();
+    const { type, text, image, mediaType, day, blood, context, ziele, laborEmpfehlung } = await req.json();
 
     if (type === "meal-text") {
       const out = await claude([
@@ -61,15 +61,20 @@ Antworte NUR mit JSON, ohne Markdown: {"name": "kurze Beschreibung", "kcal": Zah
 
     if (type === "day-summary") {
       const prompt = `${PROFILE}
+${ziele ? `\nZiele des Nutzers (VERBINDLICH, gehen Standardwerten vor):\n${JSON.stringify(ziele, null, 2)}` : ""}
+${laborEmpfehlung ? `\nLaborbasierte Empfehlung (woran der Nutzer laut seinen Blutwerten arbeiten soll):\n${JSON.stringify(laborEmpfehlung, null, 2)}` : ""}
 
 Tagesdaten des Nutzers:
 ${JSON.stringify(day, null, 2)}
 
-Schreibe eine kurze, differenzierte Tageszusammenfassung in 3-4 Sätzen zu Ernährung/Protein, Bewegung/Training/Schritte und ggf. Messwerten.
-Gleiche die Werte mit den Zielen ab (kcal 2.300–2.600, Protein ≥150 g, Schritte ~8.000, Krafttraining).
-Wichtig — differenziert sein: Erreichte oder fast erreichte Ziele zuerst klar als Erfolg benennen und ehrlich bestätigen, dann offene Punkte sachlich anmerken. Wenn die meisten Ziele erreicht sind, mach das deutlich ("starker Tag" o.ä.) und motiviere; reiß keinen guten Tag durch Defizit-Fokus klein. Wenn wenig erreicht wurde, bleib sachlich-konstruktiv ohne Vorwurf. Keine Aufzählung, kein Markdown.
-Antworte NUR mit JSON: {"text": "die 3-4 Sätze"}`;
-      const out = await claude([{ role: "user", content: prompt }], 350);
+WICHTIG zur Genauigkeit: Die Werte unter "summe" (kcal, protein) sind die exakte, bereits berechnete Tagesbilanz. Übernimm GENAU diese Zahlen und nenne keine davon abweichenden Mengen. Schätze Protein/Kalorien NICHT selbst nach und addiere die einzelnen Mahlzeiten nicht erneut.
+
+Schreibe eine kurze, differenzierte Tagesanalyse in 3-4 Sätzen zu Ernährung/Protein, Bewegung/Training/Schritte und ggf. Messwerten.
+Gleiche die Werte mit den (oben genannten) Zielen ab. Wenn keine Ziele übergeben wurden, nutze: kcal 2.300–2.600, Protein ≥150 g, Schritte ~8.000, Krafttraining.
+Schließe mit einem klaren FAZIT (1 Satz): Bewegt sich der Nutzer mit DIESEM Tag auf seine Ziele${laborEmpfehlung ? " und die Laborempfehlung" : ""} zu, oder eher davon weg?
+Differenziert sein: erreichte oder fast erreichte Ziele zuerst klar als Erfolg benennen und ehrlich bestätigen, dann offene Punkte sachlich anmerken. Bei einem starken Tag das deutlich machen ("starker Tag" o.ä.) und motivieren – reiß keinen guten Tag durch Defizit-Fokus klein. Bei wenig Erreichtem sachlich-konstruktiv ohne Vorwurf bleiben. Keine Aufzählung, kein Markdown.
+Antworte NUR mit JSON: {"text": "die 3-4 Sätze inkl. Fazit"}`;
+      const out = await claude([{ role: "user", content: prompt }], 400);
       return Response.json(jsonFrom(out));
     }
 
@@ -99,7 +104,8 @@ ${JSON.stringify(context || {}, null, 2)}
 
 Aufgabe: Beurteile die wichtigsten Werte mit Fokus auf den Stoffwechsel (HbA1c, Nüchternglukose, Insulin/HOMA-IR, Triglyceride, HDL, LDL, Cortisol, Leberwerte wie GGT/ALT, CRP/Entzündung). Prognostiziere, wie sie sich vermutlich entwickeln, WENN der Nutzer so weitermacht.
 - Pro wichtigem Wert: aktueller Stand, Trend (falls mehrere Messungen vorliegen), erwartete Richtung, kurze Begründung.
-- Ehrlich, sachlich, deutsch, kein Lob-Gesäusel. Keine Diagnose. Dies ersetzt keine ärztliche Beratung.
+- Wenn im Kontext "ziele" stehen, richte die Hebel (advice) konkret an diesen Zielen aus, damit sie umsetzbar sind.
+- Ehrlich, sachlich, deutsch. Erreichte/gute Werte ehrlich als positiv benennen, nicht nur Defizite. Keine Diagnose. Dies ersetzt keine ärztliche Beratung.
 Antworte NUR mit JSON, ohne Markdown: {"summary": "2-3 Sätze Gesamtbild", "markers": [{"name": "Wert", "status": "gut|grenzwertig|kritisch", "trend": "fallend|stabil|steigend|unklar", "outlook": "kurze Prognose wenn so weiter"}], "advice": "1-3 konkrete Hebel"}`;
       const out = await claude([{ role: "user", content: prompt }], 1300);
       return Response.json(jsonFrom(out));
