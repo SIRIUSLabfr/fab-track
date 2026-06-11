@@ -141,6 +141,14 @@ const makeThumb = (file, max = 400, q = 0.7) => new Promise((resolve, reject) =>
   img.src = URL.createObjectURL(file);
 });
 
+// Datei roh als Base64 lesen (z.B. PDF, ohne Resize)
+const fileToB64 = (file) => new Promise((resolve, reject) => {
+  const r = new FileReader();
+  r.onload = () => resolve(String(r.result).split(",")[1]);
+  r.onerror = reject;
+  r.readAsDataURL(file);
+});
+
 async function callAnalyze(payload) {
   const res = await fetch("/.netlify/functions/analyze", {
     method: "POST",
@@ -1178,10 +1186,13 @@ function Blut({ config, setConfig, measurements }) {
     if (!file || busy) return;
     setBusy(true); setErr("");
     try {
-      const b64 = await resizeImage(file);
-      const r = await callAnalyze({ type: "blood-extract", image: b64, mediaType: "image/jpeg" });
+      const isPdf = file.type === "application/pdf" || /\.pdf$/i.test(file.name || "");
+      const payload = isPdf
+        ? { type: "blood-extract", file: await fileToB64(file), mediaType: "application/pdf" }
+        : { type: "blood-extract", image: await resizeImage(file), mediaType: "image/jpeg" };
+      const r = await callAnalyze(payload);
       const markers = Array.isArray(r.markers) ? r.markers : [];
-      if (markers.length === 0) throw new Error("Keine Werte erkannt — schärferes Foto versuchen.");
+      if (markers.length === 0) throw new Error("Keine Werte erkannt — schärferes Foto/PDF versuchen.");
       const entry = { id: uid(), date: isValidDate(r.date) ? r.date : todayKey(), markers, createdAt: new Date().toISOString() };
       setConfig((prev) => ({ ...prev, bloodTests: [...(prev.bloodTests || []), entry] }));
     } catch (e) { setErr(e.message); }
@@ -1225,13 +1236,13 @@ function Blut({ config, setConfig, measurements }) {
         <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 10 }}>
           <Droplet size={15} color={C.accent} />
           <span style={{ fontFamily: "'Bricolage Grotesque'", fontWeight: 800, fontSize: 16 }}>Blutwerte</span>
-          <span style={{ fontSize: 10, color: C.muted, fontFamily: "'JetBrains Mono'", marginLeft: "auto" }}>Befund-Foto → KI liest aus</span>
+          <span style={{ fontSize: 10, color: C.muted, fontFamily: "'JetBrains Mono'", marginLeft: "auto" }}>Foto/PDF → KI liest aus</span>
         </div>
         <button onClick={() => fileRef.current?.click()} disabled={busy}
           style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8, background: C.accent, border: "none", borderRadius: 11, padding: "12px", cursor: "pointer", color: "#111", fontWeight: 800, fontSize: 14, fontFamily: "'Bricolage Grotesque'", opacity: busy ? .6 : 1 }}>
-          {busy ? <Loader2 size={17} className="spin" /> : <Upload size={17} />} {busy ? "Lese Werte aus…" : "Befund-Foto hochladen"}
+          {busy ? <Loader2 size={17} className="spin" /> : <Upload size={17} />} {busy ? "Lese Werte aus…" : "Befund hochladen (Foto/PDF)"}
         </button>
-        <input ref={fileRef} type="file" accept="image/*" capture="environment" style={{ display: "none" }} onChange={(e) => upload(e.target.files?.[0])} />
+        <input ref={fileRef} type="file" accept="image/*,application/pdf" style={{ display: "none" }} onChange={(e) => upload(e.target.files?.[0])} />
         {err && <div style={{ marginTop: 8, fontSize: 11.5, color: C.warn }}>{err}</div>}
         <div style={{ marginTop: 9, fontSize: 10, color: C.muted, lineHeight: 1.45 }}>Hinweis: Werte und Analyse dienen nur der persönlichen Übersicht und ersetzen keine ärztliche Beratung.</div>
       </Card>

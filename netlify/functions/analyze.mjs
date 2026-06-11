@@ -33,7 +33,7 @@ function jsonFrom(text) {
 export default async (req) => {
   if (req.method !== "POST") return new Response("Method not allowed", { status: 405 });
   try {
-    const { type, text, image, mediaType, day, blood, context, ziele, laborEmpfehlung } = await req.json();
+    const { type, text, image, mediaType, day, blood, context, ziele, laborEmpfehlung, file } = await req.json();
 
     if (type === "meal-text") {
       const out = await claude([
@@ -79,11 +79,15 @@ Antworte NUR mit JSON: {"text": "die 3-4 Sätze inkl. Fazit"}`;
     }
 
     if (type === "blood-extract") {
+      const isPdf = (mediaType || "").includes("pdf");
+      const doc = isPdf
+        ? { type: "document", source: { type: "base64", media_type: "application/pdf", data: file } }
+        : { type: "image", source: { type: "base64", media_type: mediaType || "image/jpeg", data: image } };
       const content = [
-        { type: "image", source: { type: "base64", media_type: mediaType || "image/jpeg", data: image } },
+        doc,
         {
           type: "text",
-          text: `Das ist ein Laborbefund (Blutwerte). Lies ALLE Messwerte sauber aus.
+          text: `Das ist ein Laborbefund (Blutwerte)${isPdf ? ", ggf. über mehrere Seiten" : ""}. Lies ALLE Messwerte sauber aus.
 Gib NUR JSON zurück, ohne Markdown:
 {"date": "YYYY-MM-DD oder null", "markers": [{"name": "Markername wie im Befund", "value": "Wert als String", "unit": "Einheit oder null", "ref": "Referenzbereich oder null"}]}
 Zahlen mit Punkt als Dezimaltrenner. Wenn ein Entnahmedatum erkennbar ist, gib es zurück, sonst null.`,
