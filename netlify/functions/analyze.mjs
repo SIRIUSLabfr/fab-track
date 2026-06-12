@@ -22,12 +22,37 @@ async function claude(messages, maxTokens = 600) {
   return data.content.filter((b) => b.type === "text").map((b) => b.text).join("\n");
 }
 
+// Schließt abgeschnittenes JSON wieder (z.B. wenn die Antwort am Token-Limit endet)
+function repairTruncatedJson(s) {
+  const cut = Math.max(s.lastIndexOf("}"), s.lastIndexOf("]"));
+  let str = cut > 0 ? s.slice(0, cut + 1) : s;
+  const stack = [];
+  let inStr = false, esc = false;
+  for (const ch of str) {
+    if (inStr) { if (esc) esc = false; else if (ch === "\\") esc = true; else if (ch === '"') inStr = false; continue; }
+    if (ch === '"') inStr = true;
+    else if (ch === "{" || ch === "[") stack.push(ch);
+    else if (ch === "}" || ch === "]") stack.pop();
+  }
+  str = str.replace(/,\s*$/, "");
+  for (let i = stack.length - 1; i >= 0; i--) str += stack[i] === "{" ? "}" : "]";
+  return str;
+}
+
 function jsonFrom(text) {
   const clean = text.replace(/```json|```/g, "").trim();
   const start = clean.indexOf("{");
-  const end = clean.lastIndexOf("}");
-  if (start === -1 || end === -1) throw new Error("Keine JSON-Antwort erhalten");
-  return JSON.parse(clean.slice(start, end + 1));
+  if (start === -1) throw new Error("Keine JSON-Antwort erhalten");
+  const body = clean.slice(start);
+  const end = body.lastIndexOf("}");
+  try {
+    if (end !== -1) return JSON.parse(body.slice(0, end + 1));
+  } catch { /* evtl. abgeschnitten → reparieren */ }
+  try {
+    return JSON.parse(repairTruncatedJson(body));
+  } catch {
+    throw new Error("Antwort unvollständig oder zu lang – bitte erneut versuchen.");
+  }
 }
 
 export default async (req) => {
@@ -93,7 +118,7 @@ Gib NUR JSON zurück, ohne Markdown:
 Zahlen mit Punkt als Dezimaltrenner. Wenn ein Entnahmedatum erkennbar ist, gib es zurück, sonst null.`,
         },
       ];
-      const out = await claude([{ role: "user", content }], 1500);
+      const out = await claude([{ role: "user", content }], 8000);
       return Response.json(jsonFrom(out));
     }
 
@@ -112,7 +137,7 @@ Aufgabe: Beurteile die wichtigsten Werte mit Fokus auf den Stoffwechsel (HbA1c, 
 - "measures": 3-5 konkrete, alltagstaugliche Maßnahmen, die genau auf diese Werte einzahlen (Ernährung, Bewegung, Schlaf, Timing). Keine vagen Floskeln – sag WAS und grob WIE VIEL.
 - Ehrlich, sachlich, deutsch. Erreichte/gute Werte ehrlich als positiv benennen, nicht nur Defizite. Keine Diagnose. Dies ersetzt keine ärztliche Beratung.
 Antworte NUR mit JSON, ohne Markdown: {"summary": "2-3 Sätze Gesamtbild", "markers": [{"name": "Wert", "status": "gut|grenzwertig|kritisch", "trend": "fallend|stabil|steigend|unklar", "outlook": "kurze Prognose wenn so weiter"}], "goals": ["Zielwert 1", "Zielwert 2"], "measures": ["Maßnahme 1", "Maßnahme 2"]}`;
-      const out = await claude([{ role: "user", content: prompt }], 1300);
+      const out = await claude([{ role: "user", content: prompt }], 2500);
       return Response.json(jsonFrom(out));
     }
 
