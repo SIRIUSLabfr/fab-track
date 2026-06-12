@@ -797,7 +797,7 @@ function Verlauf({ measurements, addMeasurement, days, patchDay, config, setConf
       const r = await callAnalyze({
         type: "day-summary",
         ziele: { proteinZiel_g: g.protein, kcalMax: g.kcalMax, schritteZiel: g.steps, persoenlich: (g.personal || "").trim() || null },
-        laborEmpfehlung: ba ? { gesamtbild: ba.summary, hebel: ba.advice, werte: (ba.markers || []).map((m) => ({ name: m.name, status: m.status })) } : null,
+        laborEmpfehlung: ba ? { gesamtbild: ba.summary, ziele: ba.goals || null, massnahmen: ba.measures || null, hebel: ba.advice || null, werte: (ba.markers || []).map((m) => ({ name: m.name, status: m.status })) } : null,
         day: {
           datum: sel, abgehakteMahlzeiten: mealsChecked, quickLogs: selDay?.quickLogs || [],
           training: EXERCISES.filter((e) => selDay?.exercises?.[e.id]?.done).map((e) => e.name),
@@ -1195,6 +1195,9 @@ function Blut({ config, setConfig, measurements }) {
       if (markers.length === 0) throw new Error("Keine Werte erkannt — schärferes Foto/PDF versuchen.");
       const entry = { id: uid(), date: isValidDate(r.date) ? r.date : todayKey(), markers, createdAt: new Date().toISOString() };
       setConfig((prev) => ({ ...prev, bloodTests: [...(prev.bloodTests || []), entry] }));
+      // direkt nach dem Upload automatisch eine Übersicht/Analyse erstellen
+      const newAsc = [...asc, entry].sort((a, b) => ((a.date || "") < (b.date || "") ? -1 : 1));
+      await analyzeWith(newAsc);
     } catch (e) { setErr(e.message); }
     setBusy(false);
     if (fileRef.current) fileRef.current.value = "";
@@ -1204,17 +1207,18 @@ function Blut({ config, setConfig, measurements }) {
   const setTestDate = (id, date) => setConfig((prev) => ({ ...prev, bloodTests: (prev.bloodTests || []).map((t) => (t.id === id ? { ...t, date } : t)) }));
   const removeMarker = (id, idx) => setConfig((prev) => ({ ...prev, bloodTests: (prev.bloodTests || []).map((t) => (t.id === id ? { ...t, markers: t.markers.filter((_, i) => i !== idx) } : t)) }));
 
-  const runAnalysis = async () => {
-    if (aBusy || asc.length === 0) return;
+  const analyzeWith = async (tests) => {
+    if (!tests || tests.length === 0) return;
     setABusy(true); setErr("");
     try {
       const g = { ...DEFAULT_GOALS, ...(config.goals || {}) };
-      const r = await callAnalyze({ type: "blood-analysis", blood: asc.map((t) => ({ date: t.date, markers: t.markers })), context: { messungen: (measurements || []).slice(-6), ziele: { proteinZiel_g: g.protein, kcalMax: g.kcalMax, schritteZiel: g.steps, persoenlich: (g.personal || "").trim() || null } } });
+      const r = await callAnalyze({ type: "blood-analysis", blood: tests.map((t) => ({ date: t.date, markers: t.markers })), context: { messungen: (measurements || []).slice(-6), ziele: { proteinZiel_g: g.protein, kcalMax: g.kcalMax, schritteZiel: g.steps, persoenlich: (g.personal || "").trim() || null } } });
       setAnalysis(r);
       setConfig((prev) => ({ ...prev, bloodAnalysis: r }));
     } catch (e) { setErr(e.message); }
     setABusy(false);
   };
+  const runAnalysis = () => analyzeWith(asc);
 
   const prevValue = (name, testDate) => {
     const earlier = asc.filter((t) => (t.date || "") < testDate);
@@ -1269,10 +1273,34 @@ function Blut({ config, setConfig, measurements }) {
                   {m.outlook && <div style={{ fontSize: 11.5, color: C.muted, lineHeight: 1.45, marginTop: 3 }}>{m.outlook}</div>}
                 </div>
               ))}
-              {analysis.advice && <div style={{ marginTop: 11, fontSize: 12, lineHeight: 1.5, background: "rgba(197,248,42,.06)", border: `1px solid ${C.accentDim}`, borderRadius: 10, padding: "10px 12px" }}><b style={{ color: C.accent }}>Hebel:</b> {analysis.advice}</div>}
+              {Array.isArray(analysis.goals) && analysis.goals.length > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, color: C.muted, letterSpacing: ".03em", marginBottom: 7 }}><Target size={13} color={C.accent} /> ABGELEITETE ZIELE</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {analysis.goals.map((gtxt, i) => (
+                      <div key={i} style={{ display: "flex", gap: 8, fontSize: 12.5, lineHeight: 1.45, background: C.surface2, borderRadius: 9, padding: "8px 10px" }}>
+                        <Target size={13} color={C.accent} style={{ flexShrink: 0, marginTop: 2 }} />{gtxt}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {Array.isArray(analysis.measures) && analysis.measures.length > 0 && (
+                <div style={{ marginTop: 12 }}>
+                  <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 11, fontWeight: 700, color: C.muted, letterSpacing: ".03em", marginBottom: 7 }}><Check size={13} color={C.accent} /> MASSNAHMEN</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                    {analysis.measures.map((mtxt, i) => (
+                      <div key={i} style={{ display: "flex", gap: 8, fontSize: 12.5, lineHeight: 1.45, background: "rgba(197,248,42,.06)", border: `1px solid ${C.accentDim}`, borderRadius: 9, padding: "8px 10px" }}>
+                        <Check size={13} color={C.accent} style={{ flexShrink: 0, marginTop: 2 }} />{mtxt}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+              {analysis.advice && !(Array.isArray(analysis.measures) && analysis.measures.length) && <div style={{ marginTop: 11, fontSize: 12, lineHeight: 1.5, background: "rgba(197,248,42,.06)", border: `1px solid ${C.accentDim}`, borderRadius: 10, padding: "10px 12px" }}><b style={{ color: C.accent }}>Hebel:</b> {analysis.advice}</div>}
             </div>
           )}
-          {!analysis && <div style={{ marginTop: 9, fontSize: 11.5, color: C.muted }}>Beurteilt deine wichtigen Werte und prognostiziert die Entwicklung, wenn du so weitermachst.</div>}
+          {!analysis && <div style={{ marginTop: 9, fontSize: 11.5, color: C.muted }}>Läuft automatisch nach dem Upload: beurteilt deine wichtigen Werte, prognostiziert die Entwicklung und leitet Ziele + Maßnahmen ab.</div>}
         </Card>
       )}
 
