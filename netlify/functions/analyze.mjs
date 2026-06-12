@@ -106,11 +106,12 @@ ${JSON.stringify(blood, null, 2)}
 Lebensstil-Kontext (Tracking: Gewicht/Bauch-Verlauf, Ziele):
 ${JSON.stringify(context || {}, null, 2)}
 
-Aufgabe: Beurteile die wichtigsten Werte mit Fokus auf den Stoffwechsel (HbA1c, Nüchternglukose, Insulin/HOMA-IR, Triglyceride, HDL, LDL, Cortisol, Leberwerte wie GGT/ALT, CRP/Entzündung). Prognostiziere, wie sie sich vermutlich entwickeln, WENN der Nutzer so weitermacht.
+Aufgabe: Beurteile die wichtigsten Werte mit Fokus auf den Stoffwechsel (HbA1c, Nüchternglukose, Insulin/HOMA-IR, Triglyceride, HDL, LDL, Cortisol, Leberwerte wie GGT/ALT, CRP/Entzündung). Prognostiziere, wie sie sich vermutlich entwickeln, WENN der Nutzer so weitermacht. Leite daraus konkrete Ziele und Maßnahmen ab.
 - Pro wichtigem Wert: aktueller Stand, Trend (falls mehrere Messungen vorliegen), erwartete Richtung, kurze Begründung.
-- Wenn im Kontext "ziele" stehen, richte die Hebel (advice) konkret an diesen Zielen aus, damit sie umsetzbar sind.
+- "goals": 2-4 konkrete, messbare Zielwerte, die aus den Befunden sinnvoll sind (z.B. "HbA1c unter 5,7 %", "Triglyceride unter 150 mg/dl", "HOMA-IR unter 2,5"). Wenn im Kontext "ziele" stehen, beziehe sie mit ein.
+- "measures": 3-5 konkrete, alltagstaugliche Maßnahmen, die genau auf diese Werte einzahlen (Ernährung, Bewegung, Schlaf, Timing). Keine vagen Floskeln – sag WAS und grob WIE VIEL.
 - Ehrlich, sachlich, deutsch. Erreichte/gute Werte ehrlich als positiv benennen, nicht nur Defizite. Keine Diagnose. Dies ersetzt keine ärztliche Beratung.
-Antworte NUR mit JSON, ohne Markdown: {"summary": "2-3 Sätze Gesamtbild", "markers": [{"name": "Wert", "status": "gut|grenzwertig|kritisch", "trend": "fallend|stabil|steigend|unklar", "outlook": "kurze Prognose wenn so weiter"}], "advice": "1-3 konkrete Hebel"}`;
+Antworte NUR mit JSON, ohne Markdown: {"summary": "2-3 Sätze Gesamtbild", "markers": [{"name": "Wert", "status": "gut|grenzwertig|kritisch", "trend": "fallend|stabil|steigend|unklar", "outlook": "kurze Prognose wenn so weiter"}], "goals": ["Zielwert 1", "Zielwert 2"], "measures": ["Maßnahme 1", "Maßnahme 2"]}`;
       const out = await claude([{ role: "user", content: prompt }], 1300);
       return Response.json(jsonFrom(out));
     }
